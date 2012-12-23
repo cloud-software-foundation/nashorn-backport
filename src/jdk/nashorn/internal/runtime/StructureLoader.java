@@ -117,7 +117,7 @@ final class StructureLoader extends NashornLoader {
         return super.findClass(name);
     }
 
-    private static final boolean IS_JAVA_7 = System.getProperty("java.version").indexOf("1.7") != -1;
+    private static final boolean IS_JAVA_7 = false;//System.getProperty("java.version").indexOf("1.7") != -1;
 
     /**
      * Generate a layout class.
