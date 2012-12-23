@@ -1,3 +1,18 @@
+=== NASHORN BACKPORT ===
+
+This is a backport to JDK7 of [Project Nashorn](http://openjdk.java.net/projects/nashorn/),
+scheduled for inclusion in JDK8.
+
+You do not need the whole JDK forest to build this project, just do:
+
+    ant -f make/build.xml
+
+The original source repository is: 
+    
+    http://hg.openjdk.java.net/nashorn/jdk8/nashorn
+
+=== ORIGINAL README FOLLOWS ===
+
 - What is Nashorn?
 
 Nashorn is a runtime environment for programs written in ECMAScript 5.1
