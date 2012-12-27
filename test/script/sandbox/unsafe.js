@@ -26,7 +26,6 @@
  *
  * @test
  * @security
- * @run
  */
 
 function check(e) {

@@ -30,7 +30,7 @@
     <path id="nashorn.ext.path">
       <pathelement location="${dist.dir}"/>
     </path>
-    <property name="ext.class.path" value="-Djava.ext.dirs=&quot;${toString:nashorn.ext.path}&quot;"/>
+    <property name="ext.class.path" value="-Xbootclasspath/p:${dist.dir}/nashorn.jar"/>
   </target>
 
   <target name="prepare" depends="init">
