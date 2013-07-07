@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,96 +25,157 @@
 
 package jdk.nashorn.internal.ir;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+
 import jdk.nashorn.internal.codegen.types.Type;
+import jdk.nashorn.internal.ir.annotations.Ignore;
+import jdk.nashorn.internal.ir.annotations.Immutable;
 import jdk.nashorn.internal.ir.visitor.NodeVisitor;
-import jdk.nashorn.internal.runtime.Source;
 
 /**
  * IR representation for a function call.
- *
  */
-public class CallNode extends Node implements TypeOverride {
+@Immutable
+public final class CallNode extends LexicalContextNode implements TypeOverride<CallNode> {
 
-    private Type type;
+    private final Type type;
 
     /** Function identifier or function body. */
-    private Node function;
+    private final Node function;
 
     /** Call arguments. */
-    private List<Node> args;
+    private final List<Node> args;
 
-    /** flag - is new expression */
-    private boolean isNew;
+    /** Is this a "new" operation */
+    public static final int IS_NEW        = 0x1;
 
-    /** flag - is in with block */
-    private boolean inWithBlock;
+    private final int flags;
 
     /**
      * Arguments to be passed to builtin {@code eval} function
      */
     public static class EvalArgs {
         /** evaluated code */
-        public Node    code;
+        private final Node code;
+
         /** 'this' passed to evaluated code */
-        public Node    evalThis;
+        private final IdentNode evalThis;
+
         /** location string for the eval call */
-        public String  location;
+        private final String location;
+
         /** is this call from a strict context? */
-        public boolean strictMode;
+        private final boolean strictMode;
+
+        /**
+         * Constructor
+         *
+         * @param code       code to evaluate
+         * @param evalThis   this node
+         * @param location   location for the eval call
+         * @param strictMode is this a call from a strict context?
+         */
+        public EvalArgs(final Node code, final IdentNode evalThis, final String location, final boolean strictMode) {
+            this.code = code;
+            this.evalThis = evalThis;
+            this.location = location;
+            this.strictMode = strictMode;
+        }
+
+        /**
+         * Return the code that is to be eval:ed by this eval function
+         * @return code as an AST node
+         */
+        public Node getCode() {
+            return code;
+        }
+
+        private EvalArgs setCode(final Node code) {
+            if (this.code == code) {
+                return this;
+            }
+            return new EvalArgs(code, evalThis, location, strictMode);
+        }
+
+        /**
+         * Get the {@code this} symbol used to invoke this eval call
+         * @return the {@code this} symbol
+         */
+        public IdentNode getThis() {
+            return this.evalThis;
+        }
+
+        private EvalArgs setThis(final IdentNode evalThis) {
+            if (this.evalThis == evalThis) {
+                return this;
+            }
+            return new EvalArgs(code, evalThis, location, strictMode);
+        }
+
+        /**
+         * Get the human readable location for this eval call
+         * @return the location
+         */
+        public String getLocation() {
+            return this.location;
+        }
+
+        /**
+         * Check whether this eval call is executed in strict mode
+         * @return true if executed in strict mode, false otherwise
+         */
+        public boolean getStrictMode() {
+            return this.strictMode;
+        }
     }
 
     /** arguments for 'eval' call. Non-null only if this call node is 'eval' */
-    private EvalArgs evalArgs;
+    @Ignore
+    private final EvalArgs evalArgs;
 
     /**
      * Constructors
      *
-     * @param source   the source
-     * @param token    token
-     * @param finish   finish
-     * @param function the function to call
-     * @param args     args to the call
+     * @param lineNumber line number
+     * @param token      token
+     * @param finish     finish
+     * @param function   the function to call
+     * @param args       args to the call
      */
-    public CallNode(final Source source, final long token, final int finish, final Node function, final List<Node> args) {
-        super(source, token, finish);
+    public CallNode(final int lineNumber, final long token, final int finish, final Node function, final List<Node> args) {
+        super(lineNumber, token, finish);
 
-        setStart(function.getStart());
-
-        this.function     = function;
-        this.args         = args;
+        this.function = function;
+        this.args     = args;
+        this.flags    = 0;
+        this.type     = null;
+        this.evalArgs = null;
     }
 
-    private CallNode(final CallNode callNode, final CopyState cs) {
+    private CallNode(final CallNode callNode, final Node function, final List<Node> args, final int flags, final Type type, final EvalArgs evalArgs) {
         super(callNode);
-
-        final List<Node> newArgs = new ArrayList<>();
-
-        for (final Node arg : callNode.args) {
-            newArgs.add(cs.existingOrCopy(arg));
-        }
-
-        function     = cs.existingOrCopy(callNode.function);     //TODO existing or same?
-        args         = newArgs;
-        isNew        = callNode.isNew;
-        inWithBlock  = callNode.inWithBlock;
+        this.function = function;
+        this.args = args;
+        this.flags = flags;
+        this.type = type;
+        this.evalArgs = evalArgs;
     }
-
 
     @Override
     public Type getType() {
         if (hasCallSiteType()) {
             return type;
         }
-        assert !function.getType().isUnknown();
-        return function.getType();
+        return function instanceof FunctionNode ? ((FunctionNode)function).getReturnType() : Type.OBJECT;
     }
 
     @Override
-    public void setType(final Type type) {
-        this.type = type;
+    public CallNode setType(final TemporarySymbols ts, final LexicalContext lc, final Type type) {
+        if (this.type == type) {
+            return this;
+        }
+        return new CallNode(this, function, args, flags, type, evalArgs);
     }
 
     private boolean hasCallSiteType() {
@@ -126,11 +187,6 @@ public class CallNode extends Node implements TypeOverride {
         return true;
     }
 
-    @Override
-    protected Node copy(final CopyState cs) {
-        return new CallNode(this, cs);
-    }
-
     /**
      * Assist in IR navigation.
      *
@@ -139,15 +195,22 @@ public class CallNode extends Node implements TypeOverride {
      * @return node or replacement
      */
     @Override
-    public Node accept(final NodeVisitor visitor) {
-        if (visitor.enter(this) != null) {
-            function = function.accept(visitor);
-
-            for (int i = 0, count = args.size(); i < count; i++) {
-                args.set(i, args.get(i).accept(visitor));
+    public Node accept(final LexicalContext lc, final NodeVisitor<? extends LexicalContext> visitor) {
+        if (visitor.enterCallNode(this)) {
+            final CallNode newCallNode = (CallNode)visitor.leaveCallNode(
+                    setFunction(function.accept(visitor)).
+                    setArgs(Node.accept(visitor, Node.class, args)).
+                    setFlags(flags).
+                    setType(null, lc, type).
+                    setEvalArgs(evalArgs == null ?
+                            null :
+                            evalArgs.setCode(evalArgs.getCode().accept(visitor)).
+                                setThis((IdentNode)evalArgs.getThis().accept(visitor))));
+            // Theoretically, we'd need to instead pass lc to every setter and do a replacement on each. In practice,
+            // setType from TypeOverride can't accept a lc, and we don't necessarily want to go there now.
+            if(this != newCallNode) {
+                return Node.replaceInLexicalContext(lc, this, newCallNode);
             }
-
-            return visitor.leave(this);
         }
 
         return this;
@@ -158,7 +221,7 @@ public class CallNode extends Node implements TypeOverride {
         if (hasCallSiteType()) {
             sb.append('{');
             final String desc = getType().getDescriptor();
-            sb.append(desc.charAt(desc.length() - 1) == ';' ? "O" : getType().getDescriptor());
+            sb.append(desc.charAt(desc.length() - 1) == ';' ? 'O' : getType().getDescriptor());
             sb.append('}');
         }
 
@@ -193,8 +256,11 @@ public class CallNode extends Node implements TypeOverride {
      * Reset the arguments for the call
      * @param args new arguments list
      */
-    public void setArgs(final List<Node> args) {
-        this.args = args;
+    private CallNode setArgs(final List<Node> args) {
+        if (this.args == args) {
+            return this;
+        }
+        return new CallNode(this, function, args, flags, type, evalArgs);
     }
 
     /**
@@ -210,9 +276,13 @@ public class CallNode extends Node implements TypeOverride {
      * {@code eval}
      *
      * @param evalArgs eval args
+     * @return same node or new one on state change
      */
-    public void setEvalArgs(final EvalArgs evalArgs) {
-        this.evalArgs = evalArgs;
+    public CallNode setEvalArgs(final EvalArgs evalArgs) {
+        if (this.evalArgs == evalArgs) {
+            return this;
+        }
+        return new CallNode(this, function, args, flags, type, evalArgs);
     }
 
     /**
@@ -233,10 +303,14 @@ public class CallNode extends Node implements TypeOverride {
 
     /**
      * Reset the function expression that this call invokes
-     * @param node the function
+     * @param function the function
+     * @return same node or new one on state change
      */
-    public void setFunction(final Node node) {
-        function = node;
+    public CallNode setFunction(final Node function) {
+        if (this.function == function) {
+            return this;
+        }
+        return new CallNode(this, function, args, flags, type, evalArgs);
     }
 
     /**
@@ -244,28 +318,21 @@ public class CallNode extends Node implements TypeOverride {
      * @return true if this a new operation
      */
     public boolean isNew() {
-        return isNew;
+        return (flags & IS_NEW) == IS_NEW;
     }
 
     /**
      * Flag this call as a new operation
+     * @return same node or new one on state change
      */
-    public void setIsNew() {
-        this.isNew = true;
+    public CallNode setIsNew() {
+        return setFlags(IS_NEW);
     }
 
-    /**
-     * Check if this call is inside a {@code with} block
-     * @return true if the call is inside a {@code with} block
-     */
-    public boolean inWithBlock() {
-        return inWithBlock;
-    }
-
-    /**
-     * Flag this call to be inside a {@code with} block
-     */
-    public void setInWithBlock() {
-        this.inWithBlock = true;
+    private CallNode setFlags(final int flags) {
+        if (this.flags == flags) {
+            return this;
+        }
+        return new CallNode(this, function, args, flags, type, evalArgs);
     }
 }

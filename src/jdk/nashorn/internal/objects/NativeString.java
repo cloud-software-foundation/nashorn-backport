@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,19 +25,23 @@
 
 package jdk.nashorn.internal.objects;
 
+import static jdk.nashorn.internal.lookup.Lookup.MH;
 import static jdk.nashorn.internal.runtime.ECMAErrors.typeError;
 import static jdk.nashorn.internal.runtime.JSType.isRepresentableAsInt;
 import static jdk.nashorn.internal.runtime.ScriptRuntime.UNDEFINED;
-import static jdk.nashorn.internal.runtime.arrays.ArrayIndex.getArrayIndexNoThrow;
-import static jdk.nashorn.internal.runtime.linker.Lookup.MH;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedList;
 import java.util.List;
-import java.util.regex.Pattern;
+import java.util.Locale;
+import jdk.internal.dynalink.CallSiteDescriptor;
+import jdk.internal.dynalink.linker.GuardedInvocation;
+import jdk.internal.dynalink.linker.LinkRequest;
+import jdk.nashorn.internal.lookup.MethodHandleFactory.LookupException;
 import jdk.nashorn.internal.objects.annotations.Attribute;
 import jdk.nashorn.internal.objects.annotations.Constructor;
 import jdk.nashorn.internal.objects.annotations.Function;
@@ -46,17 +50,15 @@ import jdk.nashorn.internal.objects.annotations.ScriptClass;
 import jdk.nashorn.internal.objects.annotations.SpecializedConstructor;
 import jdk.nashorn.internal.objects.annotations.SpecializedFunction;
 import jdk.nashorn.internal.objects.annotations.Where;
-import jdk.nashorn.internal.parser.Lexer;
 import jdk.nashorn.internal.runtime.ConsString;
 import jdk.nashorn.internal.runtime.JSType;
+import jdk.nashorn.internal.runtime.PropertyMap;
 import jdk.nashorn.internal.runtime.ScriptFunction;
 import jdk.nashorn.internal.runtime.ScriptObject;
 import jdk.nashorn.internal.runtime.ScriptRuntime;
 import jdk.nashorn.internal.runtime.arrays.ArrayIndex;
-import jdk.nashorn.internal.runtime.linker.NashornCallSiteDescriptor;
 import jdk.nashorn.internal.runtime.linker.NashornGuards;
 import jdk.nashorn.internal.runtime.linker.PrimitiveLookup;
-import org.dynalang.dynalink.linker.GuardedInvocation;
 
 
 /**
@@ -67,16 +69,27 @@ public final class NativeString extends ScriptObject {
 
     private final CharSequence value;
 
-    private static final MethodHandle WRAPFILTER = findWrapFilter();
+    static final MethodHandle WRAPFILTER = findWrapFilter();
 
-    NativeString(final CharSequence value) {
-        this(value, Global.instance().getStringPrototype());
+    // initialized by nasgen
+    private static PropertyMap $nasgenmap$;
+
+    static PropertyMap getInitialMap() {
+        return $nasgenmap$;
     }
 
-    private NativeString(final CharSequence value, final ScriptObject proto) {
+    private NativeString(final CharSequence value) {
+        this(value, Global.instance());
+    }
+
+    NativeString(final CharSequence value, final Global global) {
+        this(value, global.getStringPrototype(), global.getStringMap());
+    }
+
+    private NativeString(final CharSequence value, final ScriptObject proto, final PropertyMap map) {
+        super(proto, map);
         assert value instanceof String || value instanceof ConsString;
         this.value = value;
-        this.setProto(proto);
     }
 
     @Override
@@ -121,10 +134,75 @@ public final class NativeString extends ScriptObject {
         return value.length();
     }
 
+    // This is to support length as method call as well.
+    @Override
+    protected GuardedInvocation findGetMethod(final CallSiteDescriptor desc, final LinkRequest request, final String operator) {
+        final String name = desc.getNameToken(2);
+
+        // if str.length(), then let the bean linker handle it
+        if ("length".equals(name) && "getMethod".equals(operator)) {
+            return null;
+        }
+
+        return super.findGetMethod(desc, request, operator);
+    }
+
+    // This is to provide array-like access to string characters without creating a NativeString wrapper.
+    @Override
+    protected GuardedInvocation findGetIndexMethod(final CallSiteDescriptor desc, final LinkRequest request) {
+        final Object self = request.getReceiver();
+        final Class<?> returnType = desc.getMethodType().returnType();
+
+        if (returnType == Object.class && (self instanceof String || self instanceof ConsString)) {
+            try {
+                MethodHandle mh = MH.findStatic(MethodHandles.lookup(), NativeString.class, "get", desc.getMethodType());
+                return new GuardedInvocation(mh, NashornGuards.getInstanceOf2Guard(String.class, ConsString.class));
+            } catch (final LookupException e) {
+                // Shouldn't happen. Fall back to super
+            }
+        }
+        return super.findGetIndexMethod(desc, request);
+    }
+
+    @SuppressWarnings("unused")
+    private static Object get(final Object self, final Object key) {
+        final CharSequence cs = JSType.toCharSequence(self);
+        final int index = ArrayIndex.getArrayIndex(key);
+        if (index >= 0 && index < cs.length()) {
+            return String.valueOf(cs.charAt(index));
+        }
+        return ((ScriptObject) Global.toObject(self)).get(key);
+    }
+
+    @SuppressWarnings("unused")
+    private static Object get(final Object self, final double key) {
+        if (isRepresentableAsInt(key)) {
+            return get(self, (int)key);
+        }
+        return ((ScriptObject) Global.toObject(self)).get(key);
+    }
+
+    @SuppressWarnings("unused")
+    private static Object get(final Object self, final long key) {
+        final CharSequence cs = JSType.toCharSequence(self);
+        if (key >= 0 && key < cs.length()) {
+            return String.valueOf(cs.charAt((int)key));
+        }
+        return ((ScriptObject) Global.toObject(self)).get(key);
+    }
+
+    private static Object get(final Object self, final int key) {
+        final CharSequence cs = JSType.toCharSequence(self);
+        if (key >= 0 && key < cs.length()) {
+            return String.valueOf(cs.charAt(key));
+        }
+        return ((ScriptObject) Global.toObject(self)).get(key);
+    }
+
     // String characters can be accessed with array-like indexing..
     @Override
     public Object get(final Object key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (index >= 0 && index < value.length()) {
             return String.valueOf(value.charAt(index));
         }
@@ -217,7 +295,7 @@ public final class NativeString extends ScriptObject {
 
     @Override
     public boolean has(final Object key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isValid(index) || super.has(key);
     }
 
@@ -228,19 +306,19 @@ public final class NativeString extends ScriptObject {
 
     @Override
     public boolean has(final long key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isValid(index) || super.has(key);
     }
 
     @Override
     public boolean has(final double key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isValid(index) || super.has(key);
     }
 
     @Override
     public boolean hasOwnProperty(final Object key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isValid(index) || super.hasOwnProperty(key);
     }
 
@@ -251,13 +329,13 @@ public final class NativeString extends ScriptObject {
 
     @Override
     public boolean hasOwnProperty(final long key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isValid(index) || super.hasOwnProperty(key);
     }
 
     @Override
     public boolean hasOwnProperty(final double key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isValid(index) || super.hasOwnProperty(key);
     }
 
@@ -268,26 +346,26 @@ public final class NativeString extends ScriptObject {
 
     @Override
     public boolean delete(final long key, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return checkDeleteIndex(index, strict)? false : super.delete(key, strict);
     }
 
     @Override
     public boolean delete(final double key, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return checkDeleteIndex(index, strict)? false : super.delete(key, strict);
     }
 
     @Override
     public boolean delete(final Object key, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return checkDeleteIndex(index, strict)? false : super.delete(key, strict);
     }
 
     private boolean checkDeleteIndex(final int index, final boolean strict) {
         if (isValid(index)) {
             if (strict) {
-                typeError(Global.instance(), "cant.delete.property", Integer.toString(index), ScriptRuntime.safeToString(this));
+                throw typeError("cant.delete.property", Integer.toString(index), ScriptRuntime.safeToString(this));
             }
             return true;
         }
@@ -297,7 +375,7 @@ public final class NativeString extends ScriptObject {
 
     @Override
     public Object getOwnPropertyDescriptor(final String key) {
-        final int index = ArrayIndex.getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (index >= 0 && index < value.length()) {
             final Global global = Global.instance();
             return global.newDataDescriptor(String.valueOf(value.charAt(index)), false, true, false);
@@ -427,17 +505,30 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object charAt(final Object self, final Object pos) {
-        try {
-            return String.valueOf(((String)self).charAt(((Number)pos).intValue()));
-        } catch (final ClassCastException | IndexOutOfBoundsException | NullPointerException e) {
-            Global.checkObjectCoercible(self);
-            final String str = JSType.toString(self);
-            final int    at  = JSType.toInteger(pos);
-            if (at < 0 || at >= str.length()) {
-                return "";
-            }
-            return String.valueOf(str.charAt(at));
-        }
+        return charAt(self, JSType.toInteger(pos));
+    }
+
+    /**
+     * ECMA 15.5.4.4 String.prototype.charAt (pos) - specialized version for double position
+     * @param self self reference
+     * @param pos  position in string
+     * @return string representing the char at the given position
+     */
+    @SpecializedFunction
+    public static String charAt(final Object self, final double pos) {
+        return charAt(self, (int)pos);
+    }
+
+    /**
+     * ECMA 15.5.4.4 String.prototype.charAt (pos) - specialized version for int position
+     * @param self self reference
+     * @param pos  position in string
+     * @return string representing the char at the given position
+     */
+    @SpecializedFunction
+    public static String charAt(final Object self, final int pos) {
+        final String str = checkObjectToString(self);
+        return (pos < 0 || pos >= str.length()) ? "" : String.valueOf(str.charAt(pos));
     }
 
     /**
@@ -448,18 +539,30 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object charCodeAt(final Object self, final Object pos) {
-        try {
-            return (int)((String)self).charAt(((Number)pos).intValue());
-        } catch (final ClassCastException | IndexOutOfBoundsException | NullPointerException e) {
-            Global.checkObjectCoercible(self);
-            final String str = JSType.toString(self);
-            final int at     = JSType.toInteger(pos);
-            if (at < 0 || at >= str.length()) {
-                return Double.NaN;
-            }
+        return charCodeAt(self, JSType.toInteger(pos));
+    }
 
-            return JSType.toObject(str.charAt(at));
-        }
+    /**
+     * ECMA 15.5.4.5 String.prototype.charCodeAt (pos) - specialized version for double position
+     * @param self self reference
+     * @param pos  position in string
+     * @return number representing charcode at position
+     */
+    @SpecializedFunction
+    public static double charCodeAt(final Object self, final double pos) {
+        return charCodeAt(self, (int) pos);
+    }
+
+    /**
+     * ECMA 15.5.4.5 String.prototype.charCodeAt (pos) - specialized version for int position
+     * @param self self reference
+     * @param pos  position in string
+     * @return number representing charcode at position
+     */
+    @SpecializedFunction
+    public static double charCodeAt(final Object self, final int pos) {
+        final String str = checkObjectToString(self);
+        return (pos < 0 || pos >= str.length()) ? Double.NaN :  str.charAt(pos);
     }
 
     /**
@@ -470,14 +573,13 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE, arity = 1)
     public static Object concat(final Object self, final Object... args) {
-        Global.checkObjectCoercible(self);
-        final StringBuilder sb = new StringBuilder(JSType.toString(self));
+        CharSequence cs = checkObjectToString(self);
         if (args != null) {
             for (final Object obj : args) {
-                sb.append(JSType.toString(obj));
+                cs = new ConsString(cs, JSType.toCharSequence(obj));
             }
         }
-        return sb.toString();
+        return cs;
     }
 
     /**
@@ -489,12 +591,43 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE, arity = 1)
     public static Object indexOf(final Object self, final Object search, final Object pos) {
-        try {
-            return ((String)self).indexOf((String)search, ((Number)pos).intValue()); //assuming that the conversions really mean "toInteger" and not "toInt32" this is ok.
-        } catch (final ClassCastException | IndexOutOfBoundsException | NullPointerException e) {
-            Global.checkObjectCoercible(self);
-            return JSType.toString(self).indexOf(JSType.toString(search), JSType.toInteger(pos));
-        }
+        final String str = checkObjectToString(self);
+        return str.indexOf(JSType.toString(search), JSType.toInteger(pos));
+    }
+
+    /**
+     * ECMA 15.5.4.7 String.prototype.indexOf (searchString, position) specialized for no position parameter
+     * @param self   self reference
+     * @param search string to search for
+     * @return position of first match or -1
+     */
+    @SpecializedFunction
+    public static int indexOf(final Object self, final Object search) {
+        return indexOf(self, search, 0);
+    }
+
+    /**
+     * ECMA 15.5.4.7 String.prototype.indexOf (searchString, position) specialized for double position parameter
+     * @param self   self reference
+     * @param search string to search for
+     * @param pos    position to start search
+     * @return position of first match or -1
+     */
+    @SpecializedFunction
+    public static int indexOf(final Object self, final Object search, final double pos) {
+        return indexOf(self, search, (int) pos);
+    }
+
+    /**
+     * ECMA 15.5.4.7 String.prototype.indexOf (searchString, position) specialized for int position parameter
+     * @param self   self reference
+     * @param search string to search for
+     * @param pos    position to start search
+     * @return position of first match or -1
+     */
+    @SpecializedFunction
+    public static int indexOf(final Object self, final Object search, final int pos) {
+        return checkObjectToString(self).indexOf(JSType.toString(search), pos);
     }
 
     /**
@@ -506,21 +639,27 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE, arity = 1)
     public static Object lastIndexOf(final Object self, final Object search, final Object pos) {
-        Global.checkObjectCoercible(self);
 
-        final String str       = JSType.toString(self);
+        final String str       = checkObjectToString(self);
         final String searchStr = JSType.toString(search);
+        final int length       = str.length();
 
-        int from;
+        int end;
 
         if (pos == UNDEFINED) {
-            from = str.length();
+            end = length;
         } else {
             final double numPos = JSType.toNumber(pos);
-            from = !Double.isNaN(numPos) ? (int)numPos : (int)Double.POSITIVE_INFINITY;
+            end = Double.isNaN(numPos) ? length : (int)numPos;
+            if (end < 0) {
+                end = 0;
+            } else if (end > length) {
+                end = length;
+            }
         }
 
-        return str.lastIndexOf(searchStr, from);
+
+        return str.lastIndexOf(searchStr, end);
     }
 
     /**
@@ -531,10 +670,9 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object localeCompare(final Object self, final Object that) {
-        Global.checkObjectCoercible(self);
 
-        final String   str      = JSType.toString(self);
-        final Collator collator = Collator.getInstance(Global.getThisContext().getLocale());
+        final String   str      = checkObjectToString(self);
+        final Collator collator = Collator.getInstance(Global.getEnv()._locale);
 
         collator.setStrength(Collator.IDENTICAL);
         collator.setDecomposition(Collator.CANONICAL_DECOMPOSITION);
@@ -550,9 +688,8 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object match(final Object self, final Object regexp) {
-        Global.checkObjectCoercible(self);
 
-        final String str = JSType.toString(self);
+        final String str = checkObjectToString(self);
 
         NativeRegExp nativeRegExp;
         if (regexp == UNDEFINED) {
@@ -598,15 +735,14 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object replace(final Object self, final Object string, final Object replacement) {
-        Global.checkObjectCoercible(self);
 
-        final String str = JSType.toString(self);
+        final String str = checkObjectToString(self);
 
         final NativeRegExp nativeRegExp;
         if (string instanceof NativeRegExp) {
             nativeRegExp = (NativeRegExp) string;
         } else {
-            nativeRegExp = new NativeRegExp(Pattern.compile(JSType.toString(string), Pattern.LITERAL));
+            nativeRegExp = NativeRegExp.flatRegExp(JSType.toString(string));
         }
 
         if (replacement instanceof ScriptFunction) {
@@ -625,9 +761,8 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object search(final Object self, final Object string) {
-        Global.checkObjectCoercible(self);
 
-        final String       str          = JSType.toString(self);
+        final String       str          = checkObjectToString(self);
         final NativeRegExp nativeRegExp = Global.toRegExp(string == UNDEFINED ? "" : string);
 
         return nativeRegExp.search(str);
@@ -643,30 +778,72 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object slice(final Object self, final Object start, final Object end) {
-        Global.checkObjectCoercible(self);
 
-        final String str      = JSType.toString(self);
-        final int    len      = str.length();
-        final int    intStart = JSType.toInteger(start);
-        final int    intEnd   = (end == UNDEFINED) ? len : JSType.toInteger(end);
-
-        int from;
-
-        if (intStart < 0) {
-            from = Math.max(len + intStart, 0);
-        } else {
-            from = Math.min(intStart, len);
+        final String str      = checkObjectToString(self);
+        if (end == UNDEFINED) {
+            return slice(str, JSType.toInteger(start));
         }
+        return slice(str, JSType.toInteger(start), JSType.toInteger(end));
+    }
 
-        int to;
+    /**
+     * ECMA 15.5.4.13 String.prototype.slice (start, end) specialized for single int parameter
+     *
+     * @param self  self reference
+     * @param start start position for slice
+     * @return sliced out substring
+     */
+    @SpecializedFunction
+    public static Object slice(final Object self, final int start) {
+        final String str = checkObjectToString(self);
+        final int from = (start < 0) ? Math.max(str.length() + start, 0) : Math.min(start, str.length());
 
-        if (intEnd < 0) {
-            to = Math.max(len + intEnd,0);
-        } else {
-            to = Math.min(intEnd, len);
-        }
+        return str.substring(from);
+    }
 
-        return str.substring(Math.min(from,  to), to);
+    /**
+     * ECMA 15.5.4.13 String.prototype.slice (start, end) specialized for single double parameter
+     *
+     * @param self  self reference
+     * @param start start position for slice
+     * @return sliced out substring
+     */
+    @SpecializedFunction
+    public static Object slice(final Object self, final double start) {
+        return slice(self, (int)start);
+    }
+
+    /**
+     * ECMA 15.5.4.13 String.prototype.slice (start, end) specialized for two int parameters
+     *
+     * @param self  self reference
+     * @param start start position for slice
+     * @param end   end position for slice
+     * @return sliced out substring
+     */
+    @SpecializedFunction
+    public static Object slice(final Object self, final int start, final int end) {
+
+        final String str = checkObjectToString(self);
+        final int len    = str.length();
+
+        final int from = (start < 0) ? Math.max(len + start, 0) : Math.min(start, len);
+        final int to   = (end < 0)   ? Math.max(len + end, 0)   : Math.min(end, len);
+
+        return str.substring(Math.min(from, to), to);
+    }
+
+    /**
+     * ECMA 15.5.4.13 String.prototype.slice (start, end) specialized for two double parameters
+     *
+     * @param self  self reference
+     * @param start start position for slice
+     * @param end   end position for slice
+     * @return sliced out substring
+     */
+    @SpecializedFunction
+    public static Object slice(final Object self, final double start, final double end) {
+        return slice(self, (int)start, (int)end);
     }
 
     /**
@@ -679,23 +856,51 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object split(final Object self, final Object separator, final Object limit) {
-        Global.checkObjectCoercible(self);
-
-        final String str = JSType.toString(self);
+        final String str = checkObjectToString(self);
+        final long lim = (limit == UNDEFINED) ? JSType.MAX_UINT : JSType.toUint32(limit);
 
         if (separator == UNDEFINED) {
-            return new NativeArray(new Object[]{str});
+            return lim == 0 ? new NativeArray() : new NativeArray(new Object[]{str});
         }
-
-        final long lim = (limit == UNDEFINED) ? JSType.MAX_UINT : JSType.toUint32(limit);
 
         if (separator instanceof NativeRegExp) {
             return ((NativeRegExp) separator).split(str, lim);
         }
 
-        // when separator is a string, it has to be treated as a
-        // literal search string to be used for splitting.
-        return new NativeRegExp(Pattern.compile(JSType.toString(separator), Pattern.LITERAL)).split(str, lim);
+        // when separator is a string, it is treated as a literal search string to be used for splitting.
+        return splitString(str, JSType.toString(separator), lim);
+    }
+
+    private static Object splitString(String str, String separator, long limit) {
+        if (separator.isEmpty()) {
+            final int length = (int) Math.min(str.length(), limit);
+            final Object[] array = new Object[length];
+            for (int i = 0; i < length; i++) {
+                array[i] = String.valueOf(str.charAt(i));
+            }
+            return new NativeArray(array);
+        }
+
+        final List<String> elements = new LinkedList<>();
+        final int strLength = str.length();
+        final int sepLength = separator.length();
+        int pos = 0;
+        int n = 0;
+
+        while (pos < strLength && n < limit) {
+            int found = str.indexOf(separator, pos);
+            if (found == -1) {
+                break;
+            }
+            elements.add(str.substring(pos, found));
+            n++;
+            pos = found + sepLength;
+        }
+        if (pos <= strLength && n < limit) {
+            elements.add(str.substring(pos));
+        }
+
+        return new NativeArray(elements.toArray());
     }
 
     /**
@@ -731,25 +936,77 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object substring(final Object self, final Object start, final Object end) {
-        Global.checkObjectCoercible(self);
 
-        final String str        = JSType.toString(self);
-        final int    len        = str.length();
-        final int    intStart   = JSType.toInteger(start);
-        final int    intEnd     = (end == UNDEFINED) ? len : JSType.toInteger(end);
-        final int    finalStart = Math.min((intStart < 0) ? 0 : intStart, len);
-        final int    finalEnd   = Math.min((intEnd < 0) ? 0 : intEnd, len);
-
-        int from, to;
-
-        if (finalStart < finalEnd) {
-            from = finalStart;
-            to = finalEnd;
-        } else {
-            from = finalEnd;
-            to = finalStart;
+        final String str = checkObjectToString(self);
+        if (end == UNDEFINED) {
+            return substring(str, JSType.toInteger(start));
         }
-        return str.substring(from, to);
+        return substring(str, JSType.toInteger(start), JSType.toInteger(end));
+    }
+
+    /**
+     * ECMA 15.5.4.15 String.prototype.substring (start, end) specialized for int start parameter
+     *
+     * @param self  self reference
+     * @param start start position of substring
+     * @return substring given start and end indexes
+     */
+    @SpecializedFunction
+    public static String substring(final Object self, final int start) {
+        final String str = checkObjectToString(self);
+        if (start < 0) {
+            return str;
+        } else if (start >= str.length()) {
+            return "";
+        } else {
+            return str.substring(start);
+        }
+    }
+
+    /**
+     * ECMA 15.5.4.15 String.prototype.substring (start, end) specialized for double start parameter
+     *
+     * @param self  self reference
+     * @param start start position of substring
+     * @return substring given start and end indexes
+     */
+    @SpecializedFunction
+    public static String substring(final Object self, final double start) {
+        return substring(self, (int)start);
+    }
+
+    /**
+     * ECMA 15.5.4.15 String.prototype.substring (start, end) specialized for int start and end parameters
+     *
+     * @param self  self reference
+     * @param start start position of substring
+     * @param end   end position of substring
+     * @return substring given start and end indexes
+     */
+    @SpecializedFunction
+    public static String substring(final Object self, final int start, final int end) {
+        final String str = checkObjectToString(self);
+        final int len = str.length();
+        final int validStart = start < 0 ? 0 : (start > len ? len : start);
+        final int validEnd   = end < 0 ? 0 : (end > len ? len : end);
+
+        if (validStart < validEnd) {
+            return str.substring(validStart, validEnd);
+        }
+        return str.substring(validEnd, validStart);
+    }
+
+    /**
+     * ECMA 15.5.4.15 String.prototype.substring (start, end) specialized for double start and end parameters
+     *
+     * @param self  self reference
+     * @param start start position of substring
+     * @param end   end position of substring
+     * @return substring given start and end indexes
+     */
+    @SpecializedFunction
+    public static String substring(final Object self, final double start, final double end) {
+        return substring(self, (int)start, (int)end);
     }
 
     /**
@@ -759,8 +1016,7 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object toLowerCase(final Object self) {
-        Global.checkObjectCoercible(self);
-        return JSType.toString(self).toLowerCase();
+        return checkObjectToString(self).toLowerCase(Locale.ROOT);
     }
 
     /**
@@ -770,8 +1026,7 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object toLocaleLowerCase(final Object self) {
-        Global.checkObjectCoercible(self);
-        return JSType.toString(self).toLowerCase(Global.getThisContext().getLocale());
+        return checkObjectToString(self).toLowerCase(Global.getEnv()._locale);
     }
 
     /**
@@ -781,8 +1036,7 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object toUpperCase(final Object self) {
-        Global.checkObjectCoercible(self);
-        return JSType.toString(self).toUpperCase();
+        return checkObjectToString(self).toUpperCase(Locale.ROOT);
     }
 
     /**
@@ -792,8 +1046,7 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object toLocaleUpperCase(final Object self) {
-        Global.checkObjectCoercible(self);
-        return JSType.toString(self).toUpperCase(Global.getThisContext().getLocale());
+        return checkObjectToString(self).toUpperCase(Global.getEnv()._locale);
     }
 
     /**
@@ -803,28 +1056,24 @@ public final class NativeString extends ScriptObject {
      */
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object trim(final Object self) {
-        Global.checkObjectCoercible(self);
 
-        final String str = JSType.toString(self);
-
+        final String str = checkObjectToString(self);
+        final int len = str.length();
         int start = 0;
-        int end   = str.length() - 1;
+        int end   = len - 1;
 
-        while (start <= end && Lexer.isJSWhitespace(str.charAt(start))) {
+        while (start <= end && ScriptRuntime.isJSWhitespace(str.charAt(start))) {
             start++;
         }
-        while (end > start && Lexer.isJSWhitespace(str.charAt(end))) {
+        while (end > start && ScriptRuntime.isJSWhitespace(str.charAt(end))) {
             end--;
         }
 
-        return str.substring(start, end + 1);
+        return start == 0 && end + 1 == len ? str : str.substring(start, end + 1);
     }
 
     private static Object newObj(final Object self, final CharSequence str) {
-        if (self instanceof ScriptObject) {
-            return new NativeString(str, ((ScriptObject)self).getProto());
-        }
-        return new NativeString(str, Global.instance().getStringPrototype());
+        return new NativeString(str);
     }
 
     /**
@@ -859,7 +1108,22 @@ public final class NativeString extends ScriptObject {
         return newObj ? newObj(self, "") : "";
     }
 
-    //TODO - why is there no String with one String arg constructor?
+    /**
+     * ECMA 15.5.2.1 new String ( [ value ] ) - special version with one arg
+     *
+     * Constructor
+     *
+     * @param newObj is this constructor invoked with the new operator
+     * @param self   self reference
+     * @param arg    argument
+     *
+     * @return new NativeString (arg)
+     */
+    @SpecializedConstructor
+    public static Object constructor(final boolean newObj, final Object self, final Object arg) {
+        final CharSequence str = JSType.toCharSequence(arg);
+        return newObj ? newObj(self, str) : str.toString();
+    }
 
     /**
      * ECMA 15.5.2.1 new String ( [ value ] ) - special version with exactly one {@code int} arg
@@ -874,20 +1138,20 @@ public final class NativeString extends ScriptObject {
      */
     @SpecializedConstructor
     public static Object constructor(final boolean newObj, final Object self, final int arg) {
-        final CharSequence str = JSType.toCharSequence(arg);
+        final String str = JSType.toString(arg);
         return newObj ? newObj(self, str) : str;
     }
 
     /**
      * Lookup the appropriate method for an invoke dynamic call.
      *
-     * @param desc the call site descriptor
+     * @param request  the link request
      * @param receiver receiver of call
      * @return Link to be invoked at call site.
      */
-    public static GuardedInvocation lookupPrimitive(final NashornCallSiteDescriptor desc, final Object receiver) {
+    public static GuardedInvocation lookupPrimitive(final LinkRequest request, final Object receiver) {
         final MethodHandle guard = NashornGuards.getInstanceOf2Guard(String.class, ConsString.class);
-        return PrimitiveLookup.lookupPrimitive(desc, guard, new NativeString((CharSequence)receiver), WRAPFILTER);
+        return PrimitiveLookup.lookupPrimitive(request, guard, new NativeString((CharSequence)receiver), WRAPFILTER);
     }
 
     @SuppressWarnings("unused")
@@ -903,8 +1167,7 @@ public final class NativeString extends ScriptObject {
         } else if (self != null && self == Global.instance().getStringPrototype()) {
             return "";
         } else {
-            typeError(Global.instance(), "not.a.string", ScriptRuntime.safeToString(self));
-            return null;
+            throw typeError("not.a.string", ScriptRuntime.safeToString(self));
         }
     }
 
@@ -918,8 +1181,24 @@ public final class NativeString extends ScriptObject {
         } else if (self != null && self == Global.instance().getStringPrototype()) {
             return "";
         } else {
-            typeError(Global.instance(), "not.a.string", ScriptRuntime.safeToString(self));
-            return null;
+            throw typeError( "not.a.string", ScriptRuntime.safeToString(self));
+        }
+    }
+
+    /**
+     * Combines ECMA 9.10 CheckObjectCoercible and ECMA 9.8 ToString with a shortcut for strings.
+     *
+     * @param self the object
+     * @return the object as string
+     */
+    private static String checkObjectToString(final Object self) {
+        if (self instanceof String) {
+            return (String)self;
+        } else if (self instanceof ConsString) {
+            return self.toString();
+        } else {
+            Global.checkObjectCoercible(self);
+            return JSType.toString(self);
         }
     }
 
@@ -928,10 +1207,6 @@ public final class NativeString extends ScriptObject {
     }
 
     private static MethodHandle findWrapFilter() {
-        try {
-            return MethodHandles.lookup().findStatic(NativeString.class, "wrapFilter", MH.type(NativeString.class, Object.class));
-        } catch (final NoSuchMethodException | IllegalAccessException e) {
-            throw new AssertionError(e);
-        }
+        return MH.findStatic(MethodHandles.lookup(), NativeString.class, "wrapFilter", MH.type(NativeString.class, Object.class));
     }
 }

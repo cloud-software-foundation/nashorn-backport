@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,20 +27,19 @@ package jdk.nashorn.internal.runtime.linker;
 
 import static jdk.nashorn.internal.runtime.ECMAErrors.typeError;
 import static jdk.nashorn.internal.runtime.ScriptRuntime.UNDEFINED;
-import static jdk.nashorn.internal.runtime.linker.Lookup.MH;
+import static jdk.nashorn.internal.lookup.Lookup.MH;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.util.HashMap;
 import java.util.Map;
+import jdk.internal.dynalink.support.TypeUtilities;
 import jdk.nashorn.internal.runtime.ConsString;
-import jdk.nashorn.internal.runtime.Context;
 import jdk.nashorn.internal.runtime.JSType;
 import jdk.nashorn.internal.runtime.ScriptObject;
-import org.dynalang.dynalink.support.TypeUtilities;
 
 /**
- * Utility class shared by {@link NashornLinker} and {@code NashornPrimitiveLinker} for converting JS values to Java
+ * Utility class shared by {@code NashornLinker} and {@code NashornPrimitiveLinker} for converting JS values to Java
  * types.
  */
 public class JavaArgumentConverters {
@@ -110,7 +109,7 @@ public class JavaArgumentConverters {
                 return Character.valueOf((char) ival);
             }
 
-            typeError(Context.getGlobal(), "cant.convert.number.to.char");
+            throw typeError("cant.convert.number.to.char");
         }
 
         final String s = toString(o);
@@ -119,7 +118,7 @@ public class JavaArgumentConverters {
         }
 
         if (s.length() != 1) {
-            typeError(Context.getGlobal(), "cant.convert.string.to.char");
+            throw typeError("cant.convert.string.to.char");
         }
 
         return s.charAt(0);

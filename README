@@ -11,6 +11,9 @@ The original source repository is:
     
     http://hg.openjdk.java.net/nashorn/jdk8/nashorn
 
+NB: nashorn is not officially supported on JDK7, not everything works and performance is
+unlikely to be stellar.
+
 === ORIGINAL README FOLLOWS ===
 
 - What is Nashorn?

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,79 +25,43 @@
 
 package jdk.nashorn.internal.ir;
 
-import static jdk.nashorn.internal.codegen.objects.ObjectClassGenerator.DEBUG_FIELDS;
-
-import jdk.nashorn.internal.codegen.objects.ObjectClassGenerator;
 import jdk.nashorn.internal.codegen.types.Type;
+import jdk.nashorn.internal.ir.annotations.Immutable;
 import jdk.nashorn.internal.ir.visitor.NodeVisitor;
-import jdk.nashorn.internal.runtime.Source;
 
 /**
  * IR representation of an indexed access (brackets operator.)
- *
  */
-public class IndexNode extends BaseNode implements TypeOverride {
-    /** Property ident. */
-    private Node index;
-
-    private boolean hasCallSiteType;
+@Immutable
+public final class IndexNode extends BaseNode {
+    /** Property index. */
+    private final Node index;
 
     /**
      * Constructors
      *
-     * @param source  the source
      * @param token   token
      * @param finish  finish
      * @param base    base node for access
      * @param index   index for access
      */
-    public IndexNode(final Source source, final long token, final int finish, final Node base, final Node index) {
-        super(source, token, finish, base);
-
+    public IndexNode(final long token, final int finish, final Node base, final Node index) {
+        super(token, finish, base, false, false);
         this.index = index;
     }
 
-    /**
-     * Copy constructor
-     *
-     * @param indexNode source node
-     */
-    public IndexNode(final IndexNode indexNode) {
-        this(indexNode, new CopyState());
-    }
-
-    private IndexNode(final IndexNode indexNode, final CopyState cs) {
-        super(indexNode, cs);
-
-        index = cs.existingOrCopy(indexNode.index);
+    private IndexNode(final IndexNode indexNode, final Node base, final Node index, final boolean isFunction, final boolean hasCallSiteType) {
+        super(indexNode, base, isFunction, hasCallSiteType);
+        this.index = index;
     }
 
     @Override
-    protected Node copy(final CopyState cs) {
-        return new IndexNode(this, cs);
-    }
-
-    @Override
-    public boolean equals(final Object other) {
-        if (!super.equals(other)) {
-            return false;
+    public Node accept(final NodeVisitor<? extends LexicalContext> visitor) {
+        if (visitor.enterIndexNode(this)) {
+            return visitor.leaveIndexNode(
+                setBase(base.accept(visitor)).
+                setIndex(index.accept(visitor)));
         }
-        return index.equals(((IndexNode)other).getIndex());
-    }
-
-    @Override
-    public int hashCode() {
-        return super.hashCode() ^ getIndex().hashCode();
-    }
-
-    @Override
-    public Node accept(final NodeVisitor visitor) {
-        if (visitor.enter(this) != null) {
-            base = base.accept(visitor);
-            index = index.accept(visitor);
-            return visitor.leave(this);
-        }
-
         return this;
     }
 
@@ -105,7 +69,7 @@ public class IndexNode extends BaseNode implements TypeOverride {
     public void toString(final StringBuilder sb) {
         final boolean needsParen = tokenType().needsParens(base.tokenType(), true);
 
-        if (hasCallSiteType) {
+        if (hasCallSiteType()) {
             sb.append('{');
             final String desc = getType().getDescriptor();
             sb.append(desc.charAt(desc.length() - 1) == ';' ? "O" : getType().getDescriptor());
@@ -135,26 +99,38 @@ public class IndexNode extends BaseNode implements TypeOverride {
         return index;
     }
 
-    /**
-     * Reset the index expression for this IndexNode
-     * @param index a new index expression
-     */
-    public void setIndex(final Node index) {
-        this.index = index;
-    }
-
-    @Override
-    public void setType(final Type type) {
-        if (DEBUG_FIELDS && !Type.areEquivalent(getSymbol().getSymbolType(), type)) {
-            ObjectClassGenerator.LOG.info(getClass().getName() + " " + this + " => " + type + " instead of " + getType());
+    private IndexNode setBase(final Node base) {
+        if (this.base == base) {
+            return this;
         }
-        hasCallSiteType = true;
-        getSymbol().setTypeOverride(type);
+        return new IndexNode(this, base, index, isFunction(), hasCallSiteType());
+    }
+
+    /**
+     * Set the index expression for this node
+     * @param index new index expression
+     * @return a node equivalent to this one except for the requested change.
+     */
+    public IndexNode setIndex(Node index) {
+        if(this.index == index) {
+            return this;
+        }
+        return new IndexNode(this, base, index, isFunction(), hasCallSiteType());
     }
 
     @Override
-    public boolean canHaveCallSiteType() {
-        return true; //carried by the symbol and always the same nodetype==symboltype
+    public BaseNode setIsFunction() {
+        if (isFunction()) {
+            return this;
+        }
+        return new IndexNode(this, base, index, true, hasCallSiteType());
+    }
+
+    @Override
+    public IndexNode setType(final TemporarySymbols ts, final LexicalContext lc, final Type type) {
+        logTypeChange(type);
+        final IndexNode newIndexNode = (IndexNode)setSymbol(lc, getSymbol().setTypeOverrideShared(type, ts));
+        return new IndexNode(newIndexNode, base, index, isFunction(), true);
     }
 
 }

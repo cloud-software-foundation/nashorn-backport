@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,6 +26,7 @@
 package jdk.nashorn.api.scripting;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
@@ -40,23 +41,23 @@ import javax.script.Bindings;
 import javax.script.Compilable;
 import javax.script.CompiledScript;
 import javax.script.Invocable;
+import javax.script.ScriptContext;
 import javax.script.ScriptEngine;
 import javax.script.ScriptEngineFactory;
 import javax.script.ScriptEngineManager;
 import javax.script.ScriptException;
-import jdk.nashorn.internal.runtime.Version;
-import netscape.javascript.JSObject;
-import org.testng.TestNG;
+import javax.script.SimpleScriptContext;
+import org.testng.Assert;
 import org.testng.annotations.Test;
 
 /**
  * Tests for JSR-223 script engine for Nashorn.
+ *
+ * @test
+ * @build jdk.nashorn.api.scripting.Window jdk.nashorn.api.scripting.WindowEventHandler jdk.nashorn.api.scripting.VariableArityTestInterface jdk.nashorn.api.scripting.ScriptEngineTest
+ * @run testng jdk.nashorn.api.scripting.ScriptEngineTest
  */
 public class ScriptEngineTest {
-
-    public static void main(final String[] args) {
-        TestNG.main(args);
-    }
 
     private void log(String msg) {
         org.testng.Reporter.log(msg, true);
@@ -106,8 +107,8 @@ public class ScriptEngineTest {
         final ScriptEngine e = m.getEngineByName("nashorn");
 
         try {
-            assertEquals(true,e.eval("arguments instanceof Array"));
-            assertEquals(true, e.eval("arguments.length == 0"));
+            assertEquals(e.eval("arguments instanceof Array"), true);
+            assertEquals(e.eval("arguments.length == 0"), true);
         } catch (final Exception exp) {
             exp.printStackTrace();
             fail(exp.getMessage());
@@ -122,13 +123,13 @@ public class ScriptEngineTest {
 
         final ScriptEngineFactory fac = e.getFactory();
 
-        assertEquals("ECMAScript", fac.getLanguageName());
-        assertEquals("javascript", fac.getParameter(ScriptEngine.NAME));
-        assertEquals("ECMA - 262 Edition 5.1", fac.getLanguageVersion());
-        assertEquals("Oracle Nashorn", fac.getEngineName());
-        assertEquals(Version.version(), fac.getEngineVersion());
-        assertEquals("print(context)", fac.getOutputStatement("context"));
-        assertEquals("javascript", fac.getParameter(ScriptEngine.NAME));
+        assertEquals(fac.getLanguageName(), "ECMAScript");
+        assertEquals(fac.getParameter(ScriptEngine.NAME), "javascript");
+        assertEquals(fac.getLanguageVersion(), "ECMA - 262 Edition 5.1");
+        assertEquals(fac.getEngineName(), "Oracle Nashorn");
+        assertEquals(fac.getOutputStatement("context"), "print(context)");
+        assertEquals(fac.getProgram("print('hello')", "print('world')"), "print('hello');print('world');");
+        assertEquals(fac.getParameter(ScriptEngine.NAME), "javascript");
 
         boolean seenJS = false;
         for (String ext : fac.getExtensions()) {
@@ -137,9 +138,9 @@ public class ScriptEngineTest {
             }
         }
 
-        assertEquals(true, seenJS);
+        assertEquals(seenJS, true);
         String str = fac.getMethodCallSyntax("obj", "foo", "x");
-        assertEquals("obj.foo(x)", str);
+        assertEquals(str, "obj.foo(x)");
 
         boolean seenNashorn = false, seenJavaScript = false, seenECMAScript = false;
         for (String name : fac.getNames()) {
@@ -150,9 +151,9 @@ public class ScriptEngineTest {
             }
         }
 
-        assertEquals(true, seenNashorn);
-        assertEquals(true, seenJavaScript);
-        assertEquals(true, seenECMAScript);
+        assertTrue(seenNashorn);
+        assertTrue(seenJavaScript);
+        assertTrue(seenECMAScript);
 
         boolean seenAppJS = false, seenAppECMA = false, seenTextJS = false, seenTextECMA = false;
         for (String mime : fac.getMimeTypes()) {
@@ -164,10 +165,10 @@ public class ScriptEngineTest {
             }
         }
 
-        assertEquals(true, seenAppJS);
-        assertEquals(true, seenAppECMA);
-        assertEquals(true, seenTextJS);
-        assertEquals(true, seenTextECMA);
+        assertTrue(seenAppJS);
+        assertTrue(seenAppECMA);
+        assertTrue(seenTextJS);
+        assertTrue(seenTextECMA);
     }
 
     @Test
@@ -185,9 +186,9 @@ public class ScriptEngineTest {
             e.eval("print('hello)");
             fail("script exception expected");
         } catch (final ScriptException se) {
-            assertEquals(1, se.getLineNumber());
-            assertEquals(13, se.getColumnNumber());
-            assertEquals("myfile.js", se.getFileName());
+            assertEquals(se.getLineNumber(), 1);
+            assertEquals(se.getColumnNumber(), 13);
+            assertEquals(se.getFileName(), "myfile.js");
             // se.printStackTrace();
         }
 
@@ -250,7 +251,7 @@ public class ScriptEngineTest {
             fail(se.getMessage());
         }
 
-        assertEquals(Boolean.TRUE, res);
+        assertEquals(res, Boolean.TRUE);
     }
 
     @Test
@@ -281,6 +282,68 @@ public class ScriptEngineTest {
         }
     }
 
+    public interface Foo {
+        public void bar();
+    }
+
+    public interface Foo2 extends Foo {
+        public void bar2();
+    }
+
+    @Test
+    public void getInterfaceMissingTest() {
+        final ScriptEngineManager manager = new ScriptEngineManager();
+        final ScriptEngine engine = manager.getEngineByName("nashorn");
+
+        // don't define any function.
+        try {
+            engine.eval("");
+        } catch (final Exception exp) {
+            exp.printStackTrace();
+            fail(exp.getMessage());
+        }
+
+        Runnable runnable = ((Invocable)engine).getInterface(Runnable.class);
+        if (runnable != null) {
+            fail("runnable is not null!");
+        }
+
+        // now define "run"
+        try {
+            engine.eval("function run() { print('this is run function'); }");
+        } catch (final Exception exp) {
+            exp.printStackTrace();
+            fail(exp.getMessage());
+        }
+        runnable = ((Invocable)engine).getInterface(Runnable.class);
+        // should not return null now!
+        runnable.run();
+
+        // define only one method of "Foo2"
+        try {
+            engine.eval("function bar() { print('bar function'); }");
+        } catch (final Exception exp) {
+            exp.printStackTrace();
+            fail(exp.getMessage());
+        }
+
+        Foo2 foo2 = ((Invocable)engine).getInterface(Foo2.class);
+        if (foo2 != null) {
+            throw new RuntimeException("foo2 is not null!");
+        }
+
+        // now define other method of "Foo2"
+        try {
+            engine.eval("function bar2() { print('bar2 function'); }");
+        } catch (final Exception exp) {
+            exp.printStackTrace();
+            fail(exp.getMessage());
+        }
+        foo2 = ((Invocable)engine).getInterface(Foo2.class);
+        foo2.bar();
+        foo2.bar2();
+    }
+
     @Test
     public void accessGlobalTest() {
         final ScriptEngineManager m = new ScriptEngineManager();
@@ -288,7 +351,7 @@ public class ScriptEngineTest {
 
         try {
             e.eval("var x = 'hello'");
-            assertEquals("hello", e.get("x"));
+            assertEquals(e.get("x"), "hello");
         } catch (final ScriptException exp) {
             exp.printStackTrace();
             fail(exp.getMessage());
@@ -304,27 +367,6 @@ public class ScriptEngineTest {
             e.put("y", "foo");
             e.eval("print(y)");
         } catch (final ScriptException exp) {
-            exp.printStackTrace();
-            fail(exp.getMessage());
-        }
-    }
-
-    public static void alert(final Object self, final Object msg) {
-        System.out.println(msg);
-    }
-
-    @Test
-    public void exposeFunctionTest() {
-        final ScriptEngineManager m = new ScriptEngineManager();
-        final ScriptEngine e = m.getEngineByName("nashorn");
-
-        try {
-            final Method alert = ScriptEngineTest.class.getMethod("alert", Object.class, Object.class);
-            // expose a Method object as global var.
-            e.put("alert", alert);
-            // call the global var.
-            e.eval("alert('alert! alert!!')");
-        } catch (final NoSuchMethodException | SecurityException | ScriptException exp) {
             exp.printStackTrace();
             fail(exp.getMessage());
         }
@@ -358,11 +400,8 @@ public class ScriptEngineTest {
 
         try {
             e.put("window", window);
-            e.eval("print(window.alert)"); // TODO: bug - prints 'undefined'
+            e.eval("print(window.alert)");
             e.eval("window.alert('calling window.alert...')");
-            // TODO: java.lang.NoSuchMethodException: alert
-            // ((Invocable) e).invokeMethod(window, "alert",
-            // "invoking window.alert...");
         } catch (final Exception exp) {
             exp.printStackTrace();
             fail(exp.getMessage());
@@ -378,8 +417,8 @@ public class ScriptEngineTest {
         try {
             e.put("window", window);
             e.eval("print(window.location)");
-            final Object locationValue = ((Invocable)e).invokeMethod(window, "getLocation");
-            assertEquals("http://localhost:8080/window", locationValue);
+            final Object locationValue = e.eval("window.getLocation()");
+            assertEquals(locationValue, "http://localhost:8080/window");
         } catch (final Exception exp) {
             exp.printStackTrace();
             fail(exp.getMessage());
@@ -395,9 +434,9 @@ public class ScriptEngineTest {
         try {
             e.put("window", window);
             final String item1 = (String)e.eval("window.item(65535)");
-            assertEquals("ffff", item1);
-            final String item2 = (String)((Invocable)e).invokeMethod(window, "item", 255);
-            assertEquals("ff", item2);
+            assertEquals(item1, "ffff");
+            final String item2 = (String)e.eval("window.item(255)");
+            assertEquals(item2, "ff");
         } catch (final Exception exp) {
             exp.printStackTrace();
             fail(exp.getMessage());
@@ -433,9 +472,9 @@ public class ScriptEngineTest {
             e.eval("throw 'foo'");
         } catch (final ScriptException exp) {
             log(exp.getMessage());
-            assertEquals("foo in throwtest.js at line number 1 at column number 0", exp.getMessage());
-            assertEquals("throwtest.js", exp.getFileName());
-            assertEquals(1, exp.getLineNumber());
+            assertEquals(exp.getMessage(), "foo in throwtest.js at line number 1 at column number 0");
+            assertEquals(exp.getFileName(), "throwtest.js");
+            assertEquals(exp.getLineNumber(), 1);
         }
     }
 
@@ -490,18 +529,18 @@ public class ScriptEngineTest {
 
         int count = 0;
         Map<Object, Object> map = (Map<Object, Object>)e.get("obj");
-        assertEquals(false, map.isEmpty());
-        assertEquals(true, map.keySet().contains("x"));
-        assertEquals(true, map.containsKey("x"));
-        assertEquals(true, map.values().contains("nashorn"));
-        assertEquals(true, map.containsValue("nashorn"));
+        assertFalse(map.isEmpty());
+        assertTrue(map.keySet().contains("x"));
+        assertTrue(map.containsKey("x"));
+        assertTrue(map.values().contains("nashorn"));
+        assertTrue(map.containsValue("nashorn"));
         for (final Map.Entry<?, ?> ex : map.entrySet()) {
             final Object key = ex.getKey();
             if (key.equals("x")) {
                 assertTrue(344 == ((Number)ex.getValue()).doubleValue());
                 count++;
             } else if (key.equals("y")) {
-                assertEquals("nashorn", ex.getValue());
+                assertEquals(ex.getValue(), "nashorn");
                 count++;
             }
         }
@@ -510,56 +549,56 @@ public class ScriptEngineTest {
 
         // add property
         map.put("z", "hello");
-        assertEquals("hello", e.eval("obj.z"));
-        assertEquals("hello", map.get("z"));
-        assertEquals(true, map.keySet().contains("z"));
-        assertEquals(true, map.containsKey("z"));
-        assertEquals(true, map.values().contains("hello"));
-        assertEquals(true, map.containsValue("hello"));
-        assertEquals(3, map.size());
+        assertEquals(e.eval("obj.z"), "hello");
+        assertEquals(map.get("z"), "hello");
+        assertTrue(map.keySet().contains("z"));
+        assertTrue(map.containsKey("z"));
+        assertTrue(map.values().contains("hello"));
+        assertTrue(map.containsValue("hello"));
+        assertEquals(map.size(), 3);
 
         final Map<Object, Object> newMap = new HashMap<>();
         newMap.put("foo", 23.0);
         newMap.put("bar", true);
         map.putAll(newMap);
 
-        assertEquals(23.0, e.eval("obj.foo"));
-        assertEquals(true, e.eval("obj.bar"));
+        assertEquals(e.eval("obj.foo"), 23.0);
+        assertEquals(e.eval("obj.bar"), true);
 
         // remove using map method
         map.remove("foo");
-        assertEquals("undefined", e.eval("typeof obj.foo"));
+        assertEquals(e.eval("typeof obj.foo"), "undefined");
 
         count = 0;
         e.eval("var arr = [ true, 'hello' ]");
         map = (Map<Object, Object>)e.get("arr");
-        assertEquals(false, map.isEmpty());
-        assertEquals(true, map.containsKey("length"));
-        assertEquals(true, map.containsValue("hello"));
+        assertFalse(map.isEmpty());
+        assertTrue(map.containsKey("length"));
+        assertTrue(map.containsValue("hello"));
         for (final Map.Entry<?, ?> ex : map.entrySet()) {
             final Object key = ex.getKey();
             if (key.equals("0")) {
-                assertEquals(Boolean.TRUE, ex.getValue());
+                assertEquals(ex.getValue(), Boolean.TRUE);
                 count++;
             } else if (key.equals("1")) {
-                assertEquals("hello", ex.getValue());
+                assertEquals(ex.getValue(), "hello");
                 count++;
             }
         }
-        assertEquals(2, count);
-        assertEquals(2, map.size());
+        assertEquals(count, 2);
+        assertEquals(map.size(), 2);
 
         // add element
-        map.put(2, "world");
-        assertEquals("world", map.get(2));
-        assertEquals(3, map.size());
+        map.put("2", "world");
+        assertEquals(map.get("2"), "world");
+        assertEquals(map.size(), 3);
 
         // remove all
         map.clear();
-        assertEquals(true, map.isEmpty());
-        assertEquals("undefined", e.eval("typeof arr[0]"));
-        assertEquals("undefined", e.eval("typeof arr[1]"));
-        assertEquals("undefined", e.eval("typeof arr[2]"));
+        assertTrue(map.isEmpty());
+        assertEquals(e.eval("typeof arr[0]"), "undefined");
+        assertEquals(e.eval("typeof arr[1]"), "undefined");
+        assertEquals(e.eval("typeof arr[2]"), "undefined");
     }
 
     @Test
@@ -584,18 +623,11 @@ public class ScriptEngineTest {
             e.eval("var Example = function() { this.hello = function() { return 'Hello World!'; };}; myExample = new Example();");
             final Object obj = e.get("myExample");
             final Object res = ((Invocable)e).invokeMethod(obj, "hello");
-            assertEquals("Hello World!", res);
+            assertEquals(res, "Hello World!");
         } catch (final Exception exp) {
             exp.printStackTrace();
             fail(exp.getMessage());
         }
-    }
-
-    @Test
-    public void versionTest() {
-        final ScriptEngineManager m = new ScriptEngineManager();
-        final ScriptEngine e = m.getEngineByName("nashorn");
-        assertEquals(e.getFactory().getEngineVersion(), Version.version());
     }
 
     @Test
@@ -659,106 +691,6 @@ public class ScriptEngineTest {
     }
 
     @Test
-    public void securityPackagesTest() {
-        if (System.getSecurityManager() == null) {
-            // pass vacuously
-        }
-
-        final ScriptEngineManager m = new ScriptEngineManager();
-        final ScriptEngine e = m.getEngineByName("nashorn");
-        try {
-            e.eval("var v = Packages.sun.misc.Unsafe;");
-            fail("should have thrown SecurityException");
-        } catch (final Exception exp) {
-            if (exp instanceof SecurityException) {
-                log("got " + exp + " as expected");
-            } else {
-                fail(exp.getMessage());
-            }
-        }
-    }
-
-    @Test
-    public void securityJavaTypeTest() {
-        if (System.getSecurityManager() == null) {
-            // pass vacuously
-        }
-
-        final ScriptEngineManager m = new ScriptEngineManager();
-        final ScriptEngine e = m.getEngineByName("nashorn");
-        try {
-            e.eval("var v = Java.type('sun.misc.Unsafe');");
-            fail("should have thrown SecurityException");
-        } catch (final Exception exp) {
-            if (exp instanceof SecurityException) {
-                log("got " + exp + " as expected");
-            } else {
-                fail(exp.getMessage());
-            }
-        }
-    }
-
-    @Test
-    public void securityClassForNameTest() {
-        if (System.getSecurityManager() == null) {
-            // pass vacuously
-        }
-
-        final ScriptEngineManager m = new ScriptEngineManager();
-        final ScriptEngine e = m.getEngineByName("nashorn");
-        try {
-            e.eval("var v = java.lang.Class.forName('sun.misc.Unsafe');");
-            fail("should have thrown SecurityException");
-        } catch (final Exception exp) {
-            if (exp instanceof SecurityException) {
-                log("got " + exp + " as expected");
-            } else {
-                fail(exp.getMessage());
-            }
-        }
-    }
-
-    @Test
-    public void securitySystemExit() {
-        if (System.getSecurityManager() == null) {
-            // pass vacuously
-        }
-
-        final ScriptEngineManager m = new ScriptEngineManager();
-        final ScriptEngine e = m.getEngineByName("nashorn");
-        try {
-            e.eval("java.lang.System.exit(0);");
-            fail("should have thrown SecurityException");
-        } catch (final Exception exp) {
-            if (exp instanceof SecurityException) {
-                log("got " + exp + " as expected");
-            } else {
-                fail(exp.getMessage());
-            }
-        }
-    }
-
-    @Test
-    public void securitySystemLoadLibrary() {
-        if (System.getSecurityManager() == null) {
-            // pass vacuously
-        }
-
-        final ScriptEngineManager m = new ScriptEngineManager();
-        final ScriptEngine e = m.getEngineByName("nashorn");
-        try {
-            e.eval("java.lang.System.loadLibrary('foo');");
-            fail("should have thrown SecurityException");
-        } catch (final Exception exp) {
-            if (exp instanceof SecurityException) {
-                log("got " + exp + " as expected");
-            } else {
-                fail(exp.getMessage());
-            }
-        }
-    }
-
-    @Test
     public void jsobjectTest() {
         final ScriptEngineManager m = new ScriptEngineManager();
         final ScriptEngine e = m.getEngineByName("nashorn");
@@ -807,6 +739,9 @@ public class ScriptEngineTest {
                 fail("obj.prop is not deleted!");
             }
 
+            // Simple eval tests
+            assertEquals(obj.eval("typeof Object"), "function");
+            assertEquals(obj.eval("'nashorn'.substring(3)"), "horn");
         } catch (final Exception exp) {
             exp.printStackTrace();
             fail(exp.getMessage());
@@ -858,5 +793,138 @@ public class ScriptEngineTest {
             t.printStackTrace();
             fail(t.getMessage());
         }
+    }
+
+    @Test
+    public void scriptObjectMirrorToStringTest() {
+        final ScriptEngineManager m = new ScriptEngineManager();
+        final ScriptEngine e = m.getEngineByName("nashorn");
+        try {
+            Object obj = e.eval("new TypeError('wrong type')");
+            assertEquals(obj.toString(), "TypeError: wrong type", "toString returns wrong value");
+        } catch (final Throwable t) {
+            t.printStackTrace();
+            fail(t.getMessage());
+        }
+
+        try {
+            Object obj = e.eval("function func() { print('hello'); }");
+            assertEquals(obj.toString(), "function func() { print('hello'); }", "toString returns wrong value");
+        } catch (final Throwable t) {
+            t.printStackTrace();
+            fail(t.getMessage());
+        }
+    }
+
+    @Test
+    public void engineScopeTest() {
+        final ScriptEngineManager m = new ScriptEngineManager();
+        final ScriptEngine e = m.getEngineByName("nashorn");
+        Bindings engineScope = e.getBindings(ScriptContext.ENGINE_SCOPE);
+
+        // check few ECMA standard built-in global properties
+        assertNotNull(engineScope.get("Object"));
+        assertNotNull(engineScope.get("TypeError"));
+        assertNotNull(engineScope.get("eval"));
+
+        // can access via ScriptEngine.get as well
+        assertNotNull(e.get("Object"));
+        assertNotNull(e.get("TypeError"));
+        assertNotNull(e.get("eval"));
+
+        // Access by either way should return same object
+        assertEquals(engineScope.get("Array"), e.get("Array"));
+        assertEquals(engineScope.get("EvalError"), e.get("EvalError"));
+        assertEquals(engineScope.get("undefined"), e.get("undefined"));
+
+        // try exposing a new variable from scope
+        engineScope.put("myVar", "foo");
+        try {
+            assertEquals(e.eval("myVar"), "foo");
+        } catch (final ScriptException se) {
+            se.printStackTrace();
+            fail(se.getMessage());
+        }
+
+        // update "myVar" in script an check the value from scope
+        try {
+            e.eval("myVar = 'nashorn';");
+        } catch (final ScriptException se) {
+            se.printStackTrace();
+            fail(se.getMessage());
+        }
+
+        // now check modified value from scope and engine
+        assertEquals(engineScope.get("myVar"), "nashorn");
+        assertEquals(e.get("myVar"), "nashorn");
+    }
+
+    @Test
+    public void multiGlobalTest() {
+        final ScriptEngineManager m = new ScriptEngineManager();
+        final ScriptEngine e = m.getEngineByName("nashorn");
+        final Bindings b = e.createBindings();
+        final ScriptContext newCtxt = new SimpleScriptContext();
+        newCtxt.setBindings(b, ScriptContext.ENGINE_SCOPE);
+
+        try {
+            Object obj1 = e.eval("Object");
+            Object obj2 = e.eval("Object", newCtxt);
+            Assert.assertNotEquals(obj1, obj2);
+            Assert.assertNotNull(obj1);
+            Assert.assertNotNull(obj2);
+            Assert.assertEquals(obj1.toString(), obj2.toString());
+
+            e.eval("x = 'hello'");
+            e.eval("x = 'world'", newCtxt);
+            Object x1 = e.getContext().getAttribute("x");
+            Object x2 = newCtxt.getAttribute("x");
+            Assert.assertNotEquals(x1, x2);
+            Assert.assertEquals(x1, "hello");
+            Assert.assertEquals(x2, "world");
+
+            x1 = e.eval("x");
+            x2 = e.eval("x", newCtxt);
+            Assert.assertNotEquals(x1, x2);
+            Assert.assertEquals(x1, "hello");
+            Assert.assertEquals(x2, "world");
+
+            final ScriptContext origCtxt = e.getContext();
+            e.setContext(newCtxt);
+            e.eval("y = new Object()");
+            e.eval("y = new Object()", origCtxt);
+
+            Object y1 = origCtxt.getAttribute("y");
+            Object y2 = newCtxt.getAttribute("y");
+            Assert.assertNotEquals(y1, y2);
+            Assert.assertNotEquals(e.eval("y"), e.eval("y", origCtxt));
+            Assert.assertEquals("[object Object]", y1.toString());
+            Assert.assertEquals("[object Object]", y2.toString());
+        } catch (final ScriptException se) {
+            se.printStackTrace();
+            fail(se.getMessage());
+        }
+    }
+
+    @Test
+    /**
+     * Tests whether invocation of a JavaScript method through a variable arity Java method will pass the vararg array.
+     * Both non-vararg and vararg JavaScript methods are tested.
+     * @throws ScriptException
+     */
+    public void variableArityInterfaceTest() throws ScriptException {
+        final ScriptEngineManager m = new ScriptEngineManager();
+        final ScriptEngine e = m.getEngineByName("nashorn");
+        e.eval(
+            "function test1(i, strings) {" +
+            "    return 'i == ' + i + ', strings instanceof java.lang.String[] == ' + (strings instanceof Java.type('java.lang.String[]')) + ', strings == ' + java.util.Arrays.toString(strings)" +
+            "}" +
+            "function test2() {" +
+            "    return 'arguments[0] == ' + arguments[0] + ', arguments[1] instanceof java.lang.String[] == ' + (arguments[1] instanceof Java.type('java.lang.String[]')) + ', arguments[1] == ' + java.util.Arrays.toString(arguments[1])" +
+            "}"
+        );
+        final VariableArityTestInterface itf = ((Invocable)e).getInterface(VariableArityTestInterface.class);
+        Assert.assertEquals(itf.test1(42, "a", "b"), "i == 42, strings instanceof java.lang.String[] == true, strings == [a, b]");
+        Assert.assertEquals(itf.test2(44, "c", "d", "e"), "arguments[0] == 44, arguments[1] instanceof java.lang.String[] == true, arguments[1] == [c, d, e]");
     }
 }

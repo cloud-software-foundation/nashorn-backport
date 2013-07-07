@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,12 +32,20 @@ import jdk.nashorn.internal.objects.annotations.Function;
 import jdk.nashorn.internal.objects.annotations.Getter;
 import jdk.nashorn.internal.objects.annotations.ScriptClass;
 import jdk.nashorn.internal.runtime.JSType;
+import jdk.nashorn.internal.runtime.PropertyMap;
 import jdk.nashorn.internal.runtime.ScriptObject;
 import jdk.nashorn.internal.runtime.ScriptRuntime;
 
 @ScriptClass("ArrayBuffer")
-class NativeArrayBuffer extends ScriptObject {
+final class NativeArrayBuffer extends ScriptObject {
     private final byte[] buffer;
+
+    // initialized by nasgen
+    private static PropertyMap $nasgenmap$;
+
+    static PropertyMap getInitialMap() {
+        return $nasgenmap$;
+    }
 
     @Constructor(arity = 1)
     public static Object constructor(final boolean newObj, final Object self, final Object... args) {
@@ -48,9 +56,13 @@ class NativeArrayBuffer extends ScriptObject {
         return new NativeArrayBuffer(JSType.toInt32(args[0]));
     }
 
-    protected NativeArrayBuffer(final byte[] byteArray) {
+    protected NativeArrayBuffer(final byte[] byteArray, final Global global) {
+        super(global.getArrayBufferPrototype(), global.getArrayBufferMap());
         this.buffer = byteArray;
-        this.setProto(Global.instance().getArrayBufferPrototype());
+    }
+
+    protected NativeArrayBuffer(final byte[] byteArray) {
+        this(byteArray, Global.instance());
     }
 
     protected NativeArrayBuffer(final int byteLength) {

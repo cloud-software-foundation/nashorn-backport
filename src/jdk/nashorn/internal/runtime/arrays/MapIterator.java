@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,6 +25,7 @@
 
 package jdk.nashorn.internal.runtime.arrays;
 
+import java.util.NoSuchElementException;
 import jdk.nashorn.internal.runtime.JSType;
 import jdk.nashorn.internal.runtime.ScriptObject;
 
@@ -48,8 +49,8 @@ class MapIterator extends ArrayLikeIterator<Object> {
     }
 
     @Override
-    public int getLength() {
-        return (int) length;
+    public long getLength() {
+        return length;
     }
 
     @Override
@@ -65,12 +66,15 @@ class MapIterator extends ArrayLikeIterator<Object> {
             bumpIndex();
         }
 
-        // special case - balk at iterating to infinity or MAX_UINT
-        return (length != JSType.MAX_UINT) && indexInArray();
+        return indexInArray();
     }
 
     @Override
     public Object next() {
-        return indexInArray() ? obj.get(bumpIndex()) : null;
+        if (indexInArray()) {
+            return obj.get(bumpIndex());
+        }
+
+        throw new NoSuchElementException();
     }
 }

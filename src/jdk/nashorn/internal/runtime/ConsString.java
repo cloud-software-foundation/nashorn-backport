@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,7 +33,7 @@ import java.util.Deque;
  * instances of <tt>ConsString</tt> or {@link String}. Copying of characters to
  * a proper string is delayed until it becomes necessary.
  */
-public class ConsString implements CharSequence {
+public final class ConsString implements CharSequence {
 
     private CharSequence left, right;
     final private int length;

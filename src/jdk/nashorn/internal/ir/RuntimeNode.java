@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,16 +29,17 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+
 import jdk.nashorn.internal.codegen.types.Type;
+import jdk.nashorn.internal.ir.annotations.Immutable;
 import jdk.nashorn.internal.ir.visitor.NodeVisitor;
 import jdk.nashorn.internal.parser.TokenType;
-import jdk.nashorn.internal.runtime.Source;
 
 /**
  * IR representation for a runtime call.
- *
  */
-public class RuntimeNode extends Node implements TypeOverride {
+@Immutable
+public class RuntimeNode extends Node implements TypeOverride<RuntimeNode> {
 
     /**
      * Request enum used for meta-information about the runtime request
@@ -52,8 +53,6 @@ public class RuntimeNode extends Node implements TypeOverride {
         NEW,
         /** Typeof operator */
         TYPEOF,
-        /** void type */
-        VOID,
         /** Reference error type */
         REFERENCE_ERROR,
         /** Delete operator */
@@ -64,17 +63,17 @@ public class RuntimeNode extends Node implements TypeOverride {
         EQ_STRICT(TokenType.EQ_STRICT, Type.BOOLEAN, 2, true),
         /** == operator with at least one object */
         EQ(TokenType.EQ, Type.BOOLEAN, 2, true),
-        /** >= operator with at least one object */
+        /** {@literal >=} operator with at least one object */
         GE(TokenType.GE, Type.BOOLEAN, 2, true),
-        /** > operator with at least one object */
+        /** {@literal >} operator with at least one object */
         GT(TokenType.GT, Type.BOOLEAN, 2, true),
         /** in operator */
         IN(TokenType.IN, Type.BOOLEAN, 2),
         /** instanceof operator */
         INSTANCEOF(TokenType.INSTANCEOF, Type.BOOLEAN, 2),
-        /** <= operator with at least one object */
+        /** {@literal <=} operator with at least one object */
         LE(TokenType.LE, Type.BOOLEAN, 2, true),
-        /** < operator with at least one object */
+        /** {@literal <} operator with at least one object */
         LT(TokenType.LT, Type.BOOLEAN, 2, true),
         /** !== operator with at least one object */
         NE_STRICT(TokenType.NE_STRICT, Type.BOOLEAN, 2, true),
@@ -145,6 +144,22 @@ public class RuntimeNode extends Node implements TypeOverride {
         }
 
         /**
+         * Get the non-strict name for this request.
+         *
+         * @return the name without _STRICT suffix
+         */
+        public String nonStrictName() {
+            switch(this) {
+            case NE_STRICT:
+                return NE.name();
+            case EQ_STRICT:
+                return EQ.name();
+            default:
+                return name();
+            }
+        }
+
+        /**
          * Is this an EQ or EQ_STRICT?
          *
          * @param request a request
@@ -168,7 +183,7 @@ public class RuntimeNode extends Node implements TypeOverride {
 
         /**
          * If this request can be reversed, return the reverse request
-         * Eq EQ -> NE.
+         * Eq EQ {@literal ->} NE.
          *
          * @param request request to reverse
          *
@@ -255,54 +270,114 @@ public class RuntimeNode extends Node implements TypeOverride {
     private final List<Node> args;
 
     /** Call site override - e.g. we know that a ScriptRuntime.ADD will return an int */
-    private Type callSiteType;
+    private final Type callSiteType;
+
+    /** is final - i.e. may not be removed again, lower in the code pipeline */
+    private final boolean isFinal;
 
     /**
      * Constructor
      *
-     * @param source  the source
      * @param token   token
      * @param finish  finish
      * @param request the request
      * @param args    arguments to request
      */
-    public RuntimeNode(final Source source, final long token, final int finish, final Request request, final List<Node> args) {
-        super(source, token, finish);
+    public RuntimeNode(final long token, final int finish, final Request request, final List<Node> args) {
+        super(token, finish);
 
         this.request      = request;
         this.args         = args;
+        this.callSiteType = null;
+        this.isFinal      = false;
+    }
+
+    private RuntimeNode(final RuntimeNode runtimeNode, final Request request, final Type callSiteType, final boolean isFinal, final List<Node> args) {
+        super(runtimeNode);
+
+        this.request      = request;
+        this.args         = args;
+        this.callSiteType = callSiteType;
+        this.isFinal      = isFinal;
     }
 
     /**
      * Constructor
      *
-     * @param source  the source
      * @param token   token
      * @param finish  finish
      * @param request the request
      * @param args    arguments to request
      */
-    public RuntimeNode(final Source source, final long token, final int finish, final Request request, final Node... args) {
-        this(source, token, finish, request, Arrays.asList(args));
+    public RuntimeNode(final long token, final int finish, final Request request, final Node... args) {
+        this(token, finish, request, Arrays.asList(args));
     }
 
-    private RuntimeNode(final RuntimeNode runtimeNode, final CopyState cs) {
-        super(runtimeNode);
+    /**
+     * Constructor
+     *
+     * @param parent  parent node from which to inherit source, token, finish
+     * @param request the request
+     * @param args    arguments to request
+     */
+    public RuntimeNode(final Node parent, final Request request, final Node... args) {
+        this(parent, request, Arrays.asList(args));
+    }
 
-        final List<Node> newArgs = new ArrayList<>();
+    /**
+     * Constructor
+     *
+     * @param parent  parent node from which to inherit source, token, finish
+     * @param request the request
+     * @param args    arguments to request
+     */
+    public RuntimeNode(final Node parent, final Request request, final List<Node> args) {
+        super(parent);
 
-        for (final Node arg : runtimeNode.args) {
-            newArgs.add(cs.existingOrCopy(arg));
+        this.request      = request;
+        this.args         = args;
+        this.callSiteType = null;
+        this.isFinal      = false;
+    }
+
+    /**
+     * Constructor
+     *
+     * @param parent  parent node from which to inherit source, token, finish and arguments
+     * @param request the request
+     */
+    public RuntimeNode(final UnaryNode parent, final Request request) {
+        this(parent, request, parent.rhs());
+    }
+
+    /**
+     * Constructor
+     *
+     * @param parent  parent node from which to inherit source, token, finish and arguments
+     * @param request the request
+     */
+    public RuntimeNode(final BinaryNode parent, final Request request) {
+        this(parent, request, parent.lhs(), parent.rhs());
+    }
+
+    /**
+     * Is this node final - i.e. it can never be replaced with other nodes again
+     * @return true if final
+     */
+    public boolean isFinal() {
+        return isFinal;
+    }
+
+    /**
+     * Flag this node as final - i.e it may never be replaced with other nodes again
+     * @param isFinal is the node final, i.e. can not be removed and replaced by a less generic one later in codegen
+     * @return same runtime node if already final, otherwise a new one
+     */
+    public RuntimeNode setIsFinal(final boolean isFinal) {
+        if (this.isFinal == isFinal) {
+            return this;
         }
-
-        this.request      = runtimeNode.request;
-        this.args         = newArgs;
-        this.callSiteType = runtimeNode.callSiteType;
-    }
-
-    @Override
-    protected Node copy(final CopyState cs) {
-        return new RuntimeNode(this, cs);
+        return new RuntimeNode(this, request, callSiteType, isFinal, args);
     }
 
     /**
@@ -314,8 +389,11 @@ public class RuntimeNode extends Node implements TypeOverride {
     }
 
     @Override
-    public void setType(final Type type) {
-        this.callSiteType = type;
+    public RuntimeNode setType(final TemporarySymbols ts, final LexicalContext lc, final Type type) {
+        if (this.callSiteType == type) {
+            return this;
+        }
+        return new RuntimeNode(this, request, type, isFinal, args);
     }
 
     @Override
@@ -328,13 +406,13 @@ public class RuntimeNode extends Node implements TypeOverride {
     }
 
     @Override
-    public Node accept(final NodeVisitor visitor) {
-        if (visitor.enter(this) != null) {
-            for (int i = 0, count = args.size(); i < count; i++) {
-                args.set(i, args.get(i).accept(visitor));
+    public Node accept(final NodeVisitor<? extends LexicalContext> visitor) {
+        if (visitor.enterRuntimeNode(this)) {
+            final List<Node> newArgs = new ArrayList<>();
+            for (final Node arg : args) {
+                newArgs.add(arg.accept(visitor));
             }
-
-            return visitor.leave(this);
+            return visitor.leaveRuntimeNode(setArgs(newArgs));
         }
 
         return this;
@@ -367,6 +445,13 @@ public class RuntimeNode extends Node implements TypeOverride {
      */
     public List<Node> getArgs() {
         return Collections.unmodifiableList(args);
+    }
+
+    private RuntimeNode setArgs(final List<Node> args) {
+        if (this.args == args) {
+            return this;
+        }
+        return new RuntimeNode(this, request, callSiteType, isFinal, args);
     }
 
     /**

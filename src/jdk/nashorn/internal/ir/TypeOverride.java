@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -36,15 +36,19 @@ import jdk.nashorn.internal.codegen.types.Type;
  * by using JSType.toInt32. Especially in scenarios where the field is already stored
  * as a primitive, this will be much faster than the "object is all I see" scope
  * available in the method
+ * @param <T> the type of the node implementing the interface
  */
 
-public interface TypeOverride {
+public interface TypeOverride<T extends Node> {
     /**
      * Set the override type
      *
-     * @param type  the type
+     * @param ts temporary symbols
+     * @param lc the current lexical context
+     * @param type the type
+     * @return a node equivalent to this one except for the requested change.
      */
-    public void setType(final Type type);
+    public T setType(final TemporarySymbols ts, final LexicalContext lc, final Type type);
 
     /**
      * Returns true if this node can have a callsite override, e.g. all scope ident nodes

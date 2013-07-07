@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,7 +25,9 @@
 
 package jdk.nashorn.internal.runtime;
 
-import static jdk.nashorn.internal.runtime.PropertyHashMap.EMPTY_MAP;
+import jdk.nashorn.internal.scripts.JO;
+
+import static jdk.nashorn.internal.runtime.PropertyHashMap.EMPTY_HASHMAP;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.SwitchPoint;
@@ -49,29 +51,27 @@ import java.util.WeakHashMap;
  * will return a new map.
  */
 public final class PropertyMap implements Iterable<Object>, PropertyListener {
-    /** Is this a prototype PropertyMap? */
-    public static final int IS_PROTOTYPE          = 0b0000_0001;
     /** Used for non extensible PropertyMaps, negative logic as the normal case is extensible. See {@link ScriptObject#preventExtensions()} */
-    public static final int NOT_EXTENSIBLE        = 0b0000_0010;
+    public static final int NOT_EXTENSIBLE        = 0b0000_0001;
     /** This mask is used to preserve certain flags when cloning the PropertyMap. Others should not be copied */
     private static final int CLONEABLE_FLAGS_MASK = 0b0000_1111;
     /** Has a listener been added to this property map. This flag is not copied when cloning a map. See {@link PropertyListener} */
     public static final int IS_LISTENER_ADDED     = 0b0001_0000;
 
+    /** Empty map used for seed map for JO$ objects */
+    private static final PropertyMap EMPTY_MAP = new PropertyMap(EMPTY_HASHMAP);
+
     /** Map status flags. */
     private int flags;
-
-    /** Class of object referenced.*/
-    private final Class<?> structure;
-
-    /** Context associated with this {@link PropertyMap}. */
-    private final Context context;
 
     /** Map of properties. */
     private final PropertyHashMap properties;
 
-    /** objects proto. */
-    private ScriptObject proto;
+    /** Number of fields in use. */
+    private int fieldCount;
+
+    /** Number of fields available. */
+    private int fieldMaximum;
 
     /** Length of spill in use. */
     private int spillLength;
@@ -91,19 +91,29 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
     /**
      * Constructor.
      *
-     * @param structure  Class the map's {@link AccessorProperty}s apply to.
-     * @param context    Context associated with this {@link PropertyMap}.
-     * @param properties A {@link PropertyHashMap} with initial contents.
+     * @param properties   A {@link PropertyHashMap} with initial contents.
+     * @param fieldCount   Number of fields in use.
+     * @param fieldMaximum Number of fields available.
+     * @param spillLength  Number of spill slots used.
      */
-    PropertyMap(final Class<?> structure, final Context context, final PropertyHashMap properties) {
-        this.structure  = structure;
-        this.context    = context;
-        this.properties = properties;
-        this.hashCode   = computeHashCode();
+    private PropertyMap(final PropertyHashMap properties, final int fieldCount, final int fieldMaximum, final int spillLength) {
+        this.properties   = properties;
+        this.fieldCount   = fieldCount;
+        this.fieldMaximum = fieldMaximum;
+        this.spillLength  = spillLength;
 
         if (Context.DEBUG) {
             count++;
         }
+    }
+
+    /**
+     * Constructor.
+     *
+     * @param properties A {@link PropertyHashMap} with initial contents.
+     */
+    private PropertyMap(final PropertyHashMap properties) {
+        this(properties, 0, 0, 0);
     }
 
     /**
@@ -113,18 +123,25 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
      * @param properties  A {@link PropertyHashMap} with a new set of properties.
      */
     private PropertyMap(final PropertyMap propertyMap, final PropertyHashMap properties) {
-        this.structure   = propertyMap.structure;
-        this.context     = propertyMap.context;
-        this.properties  = properties;
-        this.flags       = propertyMap.getClonedFlags();
-        this.proto       = propertyMap.proto;
-        this.spillLength = propertyMap.spillLength;
-        this.hashCode    = computeHashCode();
+        this.properties   = properties;
+        this.flags        = propertyMap.getClonedFlags();
+        this.spillLength  = propertyMap.spillLength;
+        this.fieldCount   = propertyMap.fieldCount;
+        this.fieldMaximum = propertyMap.fieldMaximum;
 
         if (Context.DEBUG) {
             count++;
             clonedCount++;
         }
+    }
+
+    /**
+     * Cloning constructor.
+     *
+     * @param propertyMap Existing property map.
+      */
+    private PropertyMap(final PropertyMap propertyMap) {
+        this(propertyMap, propertyMap.properties);
     }
 
     /**
@@ -138,39 +155,21 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
      * @return Duplicated {@link PropertyMap}.
      */
     public PropertyMap duplicate() {
-        return new PropertyMap(this.structure, this.context, this.properties);
+        return new PropertyMap(this.properties);
     }
 
     /**
      * Public property map allocator.
      *
-     * @param structure  Class the map's {@link AccessorProperty}s apply to.
-     * @param properties Collection of initial properties.
-     *
+     * @param properties   Collection of initial properties.
+     * @param fieldCount   Number of fields in use.
+     * @param fieldMaximum Number of fields available.
+     * @param spillLength  Number of used spill slots.
      * @return New {@link PropertyMap}.
      */
-    public static PropertyMap newMap(final Class<?> structure, final Collection<Property> properties) {
-        final Context context = Context.fromClass(structure);
-
-        // Reduce the number of empty maps in the context.
-        if (structure == jdk.nashorn.internal.scripts.JO$.class) {
-            return context.emptyMap;
-        }
-
-        PropertyHashMap newProperties = EMPTY_MAP.immutableAdd(properties);
-
-        return new PropertyMap(structure, context, newProperties);
-    }
-
-    /**
-     * Public property map factory allocator
-     *
-     * @param structure  Class the map's {@link AccessorProperty}s apply to.
-     *
-     * @return New {@link PropertyMap}.
-     */
-    public static PropertyMap newMap(final Class<?> structure) {
-        return newMap(structure, null);
+    public static PropertyMap newMap(final Collection<Property> properties, final int fieldCount, final int fieldMaximum,  final int spillLength) {
+        PropertyHashMap newProperties = EMPTY_HASHMAP.immutableAdd(properties);
+        return new PropertyMap(newProperties, fieldCount, fieldMaximum, spillLength);
     }
 
     /**
@@ -178,8 +177,8 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
      *
      * @return New empty {@link PropertyMap}.
      */
-    public static PropertyMap newEmptyMap(Context context) {
-        return new PropertyMap(jdk.nashorn.internal.scripts.JO$.class, context, EMPTY_MAP);
+    public static PropertyMap newMap() {
+        return new PropertyMap(EMPTY_HASHMAP);
     }
 
     /**
@@ -194,11 +193,12 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
     /**
      * Return a SwitchPoint used to track changes of a property in a prototype.
      *
-     * @param key {@link Property} key.
+     * @param proto  Object prototype.
+     * @param key    {@link Property} key.
      *
      * @return A shared {@link SwitchPoint} for the property.
      */
-    public SwitchPoint getProtoGetSwitchPoint(final String key) {
+    public SwitchPoint getProtoGetSwitchPoint(final ScriptObject proto, final String key) {
         if (proto == null) {
             return null;
         }
@@ -270,13 +270,14 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
      *
      * @param key           {@link Property} key.
      * @param propertyFlags {@link Property} flags.
+     * @param slot          {@link Property} slot.
      * @param getter        {@link Property} get accessor method.
      * @param setter        {@link Property} set accessor method.
      *
      * @return  New {@link PropertyMap} with {@link AccessorProperty} added.
      */
-    public PropertyMap newProperty(final String key, final int propertyFlags, final MethodHandle getter, final MethodHandle setter) {
-        return newProperty(new AccessorProperty(key, propertyFlags, getter, setter));
+    public PropertyMap newProperty(final String key, final int propertyFlags, final int slot, final MethodHandle getter, final MethodHandle setter) {
+        return newProperty(new AccessorProperty(key, propertyFlags, slot, getter, setter));
     }
 
     /**
@@ -286,13 +287,18 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
      *
      * @return New {@link PropertyMap} with {@link Property} added.
      */
-    PropertyMap addProperty(final Property property) {
+    public PropertyMap addProperty(final Property property) {
         PropertyMap newMap = checkHistory(property);
 
         if (newMap == null) {
             final PropertyHashMap newProperties = properties.immutableAdd(property);
             newMap = new PropertyMap(this, newProperties);
             addToHistory(property, newMap);
+
+            if(!property.isSpill()) {
+                newMap.fieldCount = Math.max(newMap.fieldCount, property.getSlot() + 1);
+            }
+
             newMap.spillLength += property.getSpillCount();
         }
 
@@ -306,7 +312,7 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
      *
      * @return New {@link PropertyMap} with {@link Property} removed or {@code null} if not found.
      */
-    PropertyMap deleteProperty(final Property property) {
+    public PropertyMap deleteProperty(final Property property) {
         PropertyMap newMap = checkHistory(property);
         final String key = property.getKey();
 
@@ -353,7 +359,6 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
                 newProperty instanceof UserAccessorProperty) : "arbitrary replaceProperty attempted";
 
         newMap.flags = getClonedFlags();
-        newMap.proto = proto;
 
         /*
          * spillLength remains same in case (1) and (2) because of slot reuse. Only for case (3), we need
@@ -361,6 +366,21 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
          */
         newMap.spillLength = spillLength + (sameType? 0 : newProperty.getSpillCount());
         return newMap;
+    }
+
+    /*
+     * Make a new UserAccessorProperty property. getter and setter functions are stored in
+     * this ScriptObject and slot values are used in property object. Note that slots
+     * are assigned speculatively and should be added to map before adding other
+     * properties.
+     */
+    public UserAccessorProperty newUserAccessors(final String key, final int propertyFlags) {
+        int oldSpillLength = spillLength;
+
+        final int getterSlot = oldSpillLength++;
+        final int setterSlot = oldSpillLength++;
+
+        return new UserAccessorProperty(key, propertyFlags, getterSlot, setterSlot);
     }
 
     /**
@@ -382,6 +402,7 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
      * @return New {@link PropertyMap} with added properties.
      */
     public PropertyMap addAll(final PropertyMap other) {
+        assert this != other : "adding property map to itself";
         final Property[] otherProperties = other.properties.getProperties();
         final PropertyHashMap newProperties = properties.immutableAdd(otherProperties);
 
@@ -408,7 +429,7 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
      * @return New map with {@link #NOT_EXTENSIBLE} flag set.
      */
     PropertyMap preventExtensions() {
-        final PropertyMap newMap = new PropertyMap(this, this.properties);
+        final PropertyMap newMap = new PropertyMap(this);
         newMap.flags |= NOT_EXTENSIBLE;
         return newMap;
     }
@@ -416,11 +437,11 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
     /**
      * Prevents properties in map from being modified.
      *
-     * @return New map with {@link NOT_EXTENSIBLE} flag set and properties with
-     * {@link Property.NOT_CONFIGURABLE} set.
+     * @return New map with {@link #NOT_EXTENSIBLE} flag set and properties with
+     * {@link Property#NOT_CONFIGURABLE} set.
      */
     PropertyMap seal() {
-        PropertyHashMap newProperties = EMPTY_MAP;
+        PropertyHashMap newProperties = EMPTY_HASHMAP;
 
         for (final Property oldProperty :  properties.getProperties()) {
             newProperties = newProperties.immutableAdd(oldProperty.addFlags(Property.NOT_CONFIGURABLE));
@@ -436,10 +457,10 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
      * Prevents properties in map from being modified or written to.
      *
      * @return New map with {@link #NOT_EXTENSIBLE} flag set and properties with
-     * {@link Property.NOT_CONFIGURABLE} and {@link Property.NOT_WRITABLE} set.
+     * {@link Property#NOT_CONFIGURABLE} and {@link Property#NOT_WRITABLE} set.
      */
     PropertyMap freeze() {
-        PropertyHashMap newProperties = EMPTY_MAP;
+        PropertyHashMap newProperties = EMPTY_HASHMAP;
 
         for (Property oldProperty : properties.getProperties()) {
             int propertyFlags = Property.NOT_CONFIGURABLE;
@@ -537,11 +558,13 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
      * @param newMap   Modified {@link PropertyMap}.
      */
     private void addToHistory(final Property property, final PropertyMap newMap) {
-        if (history == null) {
-            history = new LinkedHashMap<>();
-        }
+        if (!properties.isEmpty()) {
+            if (history == null) {
+                history = new LinkedHashMap<>();
+            }
 
-        history.put(property, newMap);
+            history.put(property, newMap);
+        }
     }
 
     /**
@@ -573,11 +596,7 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
      * @return Computed hash code.
      */
     private int computeHashCode() {
-        int hash = structure.hashCode();
-
-        if (proto != null) {
-            hash ^= proto.hashCode();
-        }
+        int hash = 0;
 
         for (final Property property : getProperties()) {
             hash = hash << 7 ^ hash >> 7;
@@ -589,6 +608,9 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
 
     @Override
     public int hashCode() {
+        if (hashCode == 0 && !properties.isEmpty()) {
+            hashCode = computeHashCode();
+        }
         return hashCode;
     }
 
@@ -600,9 +622,7 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
 
         final PropertyMap otherMap = (PropertyMap)other;
 
-        if (structure != otherMap.structure ||
-            proto != otherMap.proto ||
-            properties.size() != otherMap.properties.size()) {
+        if (properties.size() != otherMap.properties.size()) {
             return false;
         }
 
@@ -634,7 +654,13 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
 
             sb.append(ScriptRuntime.safeToString(property.getKey()));
             final Class<?> ctype = property.getCurrentType();
-            sb.append(" <" + property.getClass().getSimpleName() + ":" + (ctype == null ? "undefined" : ctype.getSimpleName()) + ">");
+            sb.append(" <").
+                append(property.getClass().getSimpleName()).
+                append(':').
+                append(ctype == null ?
+                    "undefined" :
+                    ctype.getSimpleName()).
+                append('>');
         }
 
         sb.append(']');
@@ -645,31 +671,6 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
     @Override
     public Iterator<Object> iterator() {
         return new PropertyMapIterator(this);
-    }
-
-    /**
-     * Return map's {@link Context}.
-     *
-     * @return The {@link Context} where the map originated.
-     */
-    Context getContext() {
-        return context;
-    }
-
-    /**
-     * Check if this map is a prototype
-     *
-     * @return {@code true} if is prototype
-     */
-    public boolean isPrototype() {
-        return (flags & IS_PROTOTYPE) != 0;
-    }
-
-    /**
-     * Flag this map as having a prototype.
-     */
-    private void setIsPrototype() {
-        flags |= IS_PROTOTYPE;
     }
 
     /**
@@ -709,6 +710,22 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
     boolean isFrozen() {
         return !isExtensible() && allFrozen();
     }
+    /**
+     * Get the number of fields allocated for this {@link PropertyMap}.
+     *
+     * @return Number of fields allocated.
+     */
+    int getFieldCount() {
+        return fieldCount;
+    }
+    /**
+     * Get maximum number of fields available for this {@link PropertyMap}.
+     *
+     * @return Number of fields available.
+     */
+    int getFieldMaximum() {
+        return fieldMaximum;
+    }
 
     /**
      * Get length of spill area associated with this {@link PropertyMap}.
@@ -720,24 +737,14 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
     }
 
     /**
-     * Return the prototype of objects associated with this {@link PropertyMap}.
+     * Change the prototype of objects associated with this {@link PropertyMap}.
      *
-     * @return Prototype object.
-     */
-    ScriptObject getProto() {
-        return proto;
-    }
-
-    /**
-     * Set the prototype of objects associated with this {@link PropertyMap}.
-     *
-     * @param newProto Prototype object to use.
+     * @param oldProto Current prototype object.
+     * @param newProto New prototype object to replace oldProto.
      *
      * @return New {@link PropertyMap} with prototype changed.
      */
-    PropertyMap setProto(final ScriptObject newProto) {
-        final ScriptObject oldProto = this.proto;
-
+    PropertyMap changeProto(final ScriptObject oldProto, final ScriptObject newProto) {
         if (oldProto == newProto) {
             return this;
         }
@@ -750,18 +757,9 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
         if (Context.DEBUG) {
             incrementSetProtoNewMapCount();
         }
-        final PropertyMap newMap = new PropertyMap(this, this.properties);
+
+        final PropertyMap newMap = new PropertyMap(this);
         addToProtoHistory(newProto, newMap);
-
-        newMap.proto = newProto;
-
-        if (oldProto != null && newMap.isListenerAdded()) {
-            oldProto.removePropertyListener(newMap);
-        }
-
-        if (newProto != null) {
-            newProto.getMap().setIsPrototype();
-        }
 
         return newMap;
     }
@@ -916,4 +914,3 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
         setProtoNewMapCount++;
     }
 }
-

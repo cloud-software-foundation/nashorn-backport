@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,26 +25,30 @@
 
 package jdk.nashorn.api.scripting;
 
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import javax.script.Bindings;
 import jdk.nashorn.internal.runtime.Context;
 import jdk.nashorn.internal.runtime.ScriptFunction;
 import jdk.nashorn.internal.runtime.ScriptObject;
-import netscape.javascript.JSObject;
+import jdk.nashorn.internal.runtime.ScriptRuntime;
 
 /**
  * Mirror object that wraps a given ScriptObject instance. User can
- * access ScriptObject via the java.util.Map interface.
+ * access ScriptObject via the javax.script.Bindings interface or
+ * netscape.javascript.JSObject interface.
  */
-final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
+public final class ScriptObjectMirror extends JSObject implements Bindings {
     private final ScriptObject sobj;
     private final ScriptObject global;
 
@@ -67,8 +71,18 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
         return sobj.hashCode();
     }
 
+    @Override
+    public String toString() {
+        return inGlobal(new Callable<String>() {
+            @Override
+            public String call() {
+                return ScriptRuntime.safeToString(sobj);
+            }
+        });
+    }
+
     private <V> V inGlobal(final Callable<V> callable) {
-        final ScriptObject oldGlobal = Context.getGlobal();
+        final ScriptObject oldGlobal = NashornScriptEngine.getNashornGlobal();
         final boolean globalChanged = (oldGlobal != global);
         if (globalChanged) {
             NashornScriptEngine.setNashornGlobal(global);
@@ -88,39 +102,59 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
 
     // JSObject methods
     @Override
-    public Object call(final String methodName, final Object args[]) {
-        final Object val = sobj.get(methodName);
-        final ScriptObject oldGlobal = Context.getGlobal();
+    public Object call(final String functionName, final Object... args) {
+        final ScriptObject oldGlobal = NashornScriptEngine.getNashornGlobal();
         final boolean globalChanged = (oldGlobal != global);
 
-        if (val instanceof ScriptFunction) {
-            final Object[] modifiedArgs = unwrapArray(args, global);
-            if (modifiedArgs != null) {
-                for (int i = 0; i < modifiedArgs.length; i++) {
-                    final Object arg = modifiedArgs[i];
-                    if (arg instanceof ScriptObject) {
-                        modifiedArgs[i] = wrap(arg, oldGlobal);
-                    }
-                }
+        try {
+            if (globalChanged) {
+                NashornScriptEngine.setNashornGlobal(global);
             }
 
-            try {
-                if (globalChanged) {
-                    NashornScriptEngine.setNashornGlobal(global);
-                }
-                return wrap(((ScriptFunction)val).invoke(sobj, modifiedArgs), global);
-            } catch (final RuntimeException | Error e) {
-                throw e;
-            } catch (final Throwable t) {
-                throw new RuntimeException(t);
-            } finally {
-                if (globalChanged) {
-                    NashornScriptEngine.setNashornGlobal(oldGlobal);
-                }
+            final Object val = functionName == null? sobj : sobj.get(functionName);
+            if (! (val instanceof ScriptFunction)) {
+                throw new RuntimeException("No such function " + ((functionName != null)? functionName : ""));
             }
-       }
 
-       throw new RuntimeException("No such method: " + methodName);
+            final Object[] modArgs = globalChanged? wrapArray(args, oldGlobal) : args;
+            return wrap(ScriptRuntime.checkAndApply((ScriptFunction)val, sobj, unwrapArray(modArgs, global)), global);
+        } catch (final RuntimeException | Error e) {
+            throw e;
+        } catch (final Throwable t) {
+            throw new RuntimeException(t);
+        } finally {
+            if (globalChanged) {
+                NashornScriptEngine.setNashornGlobal(oldGlobal);
+            }
+        }
+    }
+
+    @Override
+    public Object newObject(final String functionName, final Object... args) {
+        final ScriptObject oldGlobal = NashornScriptEngine.getNashornGlobal();
+        final boolean globalChanged = (oldGlobal != global);
+
+        try {
+            if (globalChanged) {
+                NashornScriptEngine.setNashornGlobal(global);
+            }
+
+            final Object val = functionName == null? sobj : sobj.get(functionName);
+            if (! (val instanceof ScriptFunction)) {
+                throw new RuntimeException("not a constructor " + ((functionName != null)? functionName : ""));
+            }
+
+            final Object[] modArgs = globalChanged? wrapArray(args, oldGlobal) : args;
+            return wrap(ScriptRuntime.checkAndConstruct((ScriptFunction)val, unwrapArray(modArgs, global)), global);
+        } catch (final RuntimeException | Error e) {
+            throw e;
+        } catch (final Throwable t) {
+            throw new RuntimeException(t);
+        } finally {
+            if (globalChanged) {
+                NashornScriptEngine.setNashornGlobal(oldGlobal);
+            }
+        }
     }
 
     @Override
@@ -128,19 +162,34 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
         return inGlobal(new Callable<Object>() {
             @Override
             public Object call() {
-                return wrap(global.getContext().eval(global, s, null, null, false), global);
+                final Context context = AccessController.doPrivileged(
+                        new PrivilegedAction<Context>() {
+                            @Override
+                            public Context run() {
+                                return Context.getContext();
+                            }
+                        });
+                return wrap(context.eval(global, s, null, null, false), global);
             }
         });
     }
 
     @Override
     public Object getMember(final String name) {
-        return get(name);
+        return inGlobal(new Callable<Object>() {
+            @Override public Object call() {
+                return wrap(sobj.get(name), global);
+            }
+        });
     }
 
     @Override
     public Object getSlot(final int index) {
-        return get(Integer.valueOf(index));
+        return inGlobal(new Callable<Object>() {
+            @Override public Object call() {
+                return wrap(sobj.get(index), global);
+            }
+        });
     }
 
     @Override
@@ -150,12 +199,17 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
 
     @Override
     public void setMember(final String name, final Object value) {
-        put(name, wrap(value, Context.getGlobal()));
+        put(name, value);
     }
 
     @Override
     public void setSlot(final int index, final Object value) {
-        put(Integer.valueOf(index), wrap(value, Context.getGlobal()));
+        inGlobal(new Callable<Void>() {
+            @Override public Void call() {
+                sobj.set(index, unwrap(value, global), global.isStrictContext());
+                return null;
+            }
+        });
     }
 
     @Override
@@ -164,7 +218,8 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
             @Override public Object call() {
                 sobj.clear();
                 return null;
-            }});
+            }
+        });
     }
 
     @Override
@@ -172,7 +227,8 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
         return inGlobal(new Callable<Boolean>() {
             @Override public Boolean call() {
                 return sobj.containsKey(unwrap(key, global));
-            }});
+            }
+        });
     }
 
     @Override
@@ -180,19 +236,20 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
         return inGlobal(new Callable<Boolean>() {
             @Override public Boolean call() {
                 return sobj.containsValue(unwrap(value, global));
-            }});
+            }
+        });
     }
 
     @Override
-    public Set<Map.Entry<Object, Object>> entrySet() {
-        return inGlobal(new Callable<Set<Map.Entry<Object, Object>>>() {
-            @Override public Set<Map.Entry<Object, Object>> call() {
+    public Set<Map.Entry<String, Object>> entrySet() {
+        return inGlobal(new Callable<Set<Map.Entry<String, Object>>>() {
+            @Override public Set<Map.Entry<String, Object>> call() {
                 final Iterator<String>               iter    = sobj.propertyIterator();
-                final Set<Map.Entry<Object, Object>> entries = new HashSet<>();
+                final Set<Map.Entry<String, Object>> entries = new LinkedHashSet<>();
 
                 while (iter.hasNext()) {
-                    final Object key   = wrap(iter.next(), global);
-                    final Object value = wrap(sobj.get(key), global);
+                    final String key   = iter.next();
+                    final Object value = translateUndefined(wrap(sobj.get(key), global));
                     entries.add(new AbstractMap.SimpleImmutableEntry<>(key, value));
                 }
 
@@ -203,49 +260,65 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
 
     @Override
     public Object get(final Object key) {
-        return inGlobal(new Callable<Object>() { @Override public Object call() {
-            return wrap(sobj.get(key), global);
-        }});
+        return inGlobal(new Callable<Object>() {
+            @Override public Object call() {
+                return translateUndefined(wrap(sobj.get(key), global));
+            }
+        });
     }
 
     @Override
     public boolean isEmpty() {
-        return inGlobal(new Callable<Boolean>() { @Override public Boolean call() {
-            return sobj.isEmpty();
-        }});
-    }
-
-    @Override
-    public Set<Object> keySet() {
-        return inGlobal(new Callable<Set<Object>>() { @Override public Set<Object> call() {
-            final Iterator<String> iter   = sobj.propertyIterator();
-            final Set<Object>      keySet = new HashSet<>();
-
-            while (iter.hasNext()) {
-                keySet.add(wrap(iter.next(), global));
+        return inGlobal(new Callable<Boolean>() {
+            @Override public Boolean call() {
+                return sobj.isEmpty();
             }
-
-            return Collections.unmodifiableSet(keySet);
-        }});
+        });
     }
 
     @Override
-    public Object put(final Object key, final Object value) {
+    public Set<String> keySet() {
+        return inGlobal(new Callable<Set<String>>() {
+            @Override public Set<String> call() {
+                final Iterator<String> iter   = sobj.propertyIterator();
+                final Set<String>      keySet = new LinkedHashSet<>();
+
+                while (iter.hasNext()) {
+                    keySet.add(iter.next());
+                }
+
+                return Collections.unmodifiableSet(keySet);
+            }
+        });
+    }
+
+    @Override
+    public Object put(final String key, final Object value) {
+        final ScriptObject oldGlobal = NashornScriptEngine.getNashornGlobal();
+        final boolean globalChanged = (oldGlobal != global);
         return inGlobal(new Callable<Object>() {
             @Override public Object call() {
-                return sobj.put(unwrap(key, global), unwrap(value, global));
-        }});
+                final Object modValue = globalChanged? wrap(value, oldGlobal) : value;
+                return translateUndefined(wrap(sobj.put(key, unwrap(modValue, global)), global));
+            }
+        });
     }
 
     @Override
-    public void putAll(final Map<?, ?> map) {
-        final boolean strict = sobj.getContext()._strict;
-        inGlobal(new Callable<Object>() { @Override public Object call() {
-            for (final Map.Entry<?, ?> entry : map.entrySet()) {
-                sobj.set(unwrap(entry.getKey(), global), unwrap(entry.getValue(), global), strict);
+    public void putAll(final Map<? extends String, ? extends Object> map) {
+        final ScriptObject oldGlobal = NashornScriptEngine.getNashornGlobal();
+        final boolean globalChanged = (oldGlobal != global);
+        inGlobal(new Callable<Object>() {
+            @Override public Object call() {
+                final boolean strict = global.isStrictContext();
+                for (final Map.Entry<? extends String, ? extends Object> entry : map.entrySet()) {
+                    final Object value = entry.getValue();
+                    final Object modValue = globalChanged? wrap(value, oldGlobal) : value;
+                    sobj.set(entry.getKey(), unwrap(modValue, global), strict);
+                }
+                return null;
             }
-            return null;
-        }});
+        });
     }
 
     @Override
@@ -253,6 +326,21 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
         return inGlobal(new Callable<Object>() {
             @Override public Object call() {
                 return wrap(sobj.remove(unwrap(key, global)), global);
+            }
+        });
+    }
+
+    /**
+     * Delete a property from this object.
+     *
+     * @param key the property to be deleted
+     *
+     * @return if the delete was successful or not
+     */
+    public boolean delete(final Object key) {
+        return inGlobal(new Callable<Boolean>() {
+            @Override public Boolean call() {
+                return sobj.delete(unwrap(key, global));
             }
         });
     }
@@ -268,23 +356,220 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
 
     @Override
     public Collection<Object> values() {
-        return inGlobal(new Callable<Collection<Object>>() { @Override public Collection<Object> call() {
-            final List<Object>     values = new ArrayList<>(size());
-            final Iterator<Object> iter   = sobj.valueIterator();
+        return inGlobal(new Callable<Collection<Object>>() {
+            @Override public Collection<Object> call() {
+                final List<Object>     values = new ArrayList<>(size());
+                final Iterator<Object> iter   = sobj.valueIterator();
 
-            while (iter.hasNext()) {
-                values.add(wrap(iter.next(), global));
+                while (iter.hasNext()) {
+                    values.add(translateUndefined(wrap(iter.next(), global)));
+                }
+
+                return Collections.unmodifiableList(values);
             }
-
-            return Collections.unmodifiableList(values);
-        }});
+        });
     }
 
-    static Object wrap(final Object obj, final ScriptObject homeGlobal) {
+    // Support for ECMAScript Object API on mirrors
+
+    /**
+     * Return the __proto__ of this object.
+     * @return __proto__ object.
+     */
+    public Object getProto() {
+        return inGlobal(new Callable<Object>() {
+            @Override public Object call() {
+                return wrap(getScriptObject().getProto(), global);
+            }
+        });
+    }
+
+    /**
+     * ECMA 8.12.1 [[GetOwnProperty]] (P)
+     *
+     * @param key property key
+     *
+     * @return Returns the Property Descriptor of the named own property of this
+     * object, or undefined if absent.
+     */
+    public Object getOwnPropertyDescriptor(final String key) {
+        return inGlobal(new Callable<Object>() {
+            @Override public Object call() {
+                return wrap(getScriptObject().getOwnPropertyDescriptor(key), global);
+            }
+        });
+    }
+
+    /**
+     * return an array of own property keys associated with the object.
+     *
+     * @param all True if to include non-enumerable keys.
+     * @return Array of keys.
+     */
+    public String[] getOwnKeys(final boolean all) {
+        return inGlobal(new Callable<String[]>() {
+            @Override public String[] call() {
+                return getScriptObject().getOwnKeys(all);
+            }
+        });
+    }
+
+    /**
+     * Flag this script object as non extensible
+     *
+     * @return the object after being made non extensible
+     */
+    public ScriptObjectMirror preventExtensions() {
+        return inGlobal(new Callable<ScriptObjectMirror>() {
+            @Override public ScriptObjectMirror call() {
+                getScriptObject().preventExtensions();
+                return ScriptObjectMirror.this;
+            }
+        });
+    }
+
+    /**
+     * Check if this script object is extensible
+     * @return true if extensible
+     */
+    public boolean isExtensible() {
+        return inGlobal(new Callable<Boolean>() {
+            @Override public Boolean call() {
+                return getScriptObject().isExtensible();
+            }
+        });
+    }
+
+    /**
+     * ECMAScript 15.2.3.8 - seal implementation
+     * @return the sealed script object
+     */
+    public ScriptObjectMirror seal() {
+        return inGlobal(new Callable<ScriptObjectMirror>() {
+            @Override public ScriptObjectMirror call() {
+                getScriptObject().seal();
+                return ScriptObjectMirror.this;
+            }
+        });
+    }
+
+    /**
+     * Check whether this script object is sealed
+     * @return true if sealed
+     */
+    public boolean isSealed() {
+        return inGlobal(new Callable<Boolean>() {
+            @Override public Boolean call() {
+                return getScriptObject().isSealed();
+            }
+        });
+    }
+
+    /**
+     * ECMA 15.2.39 - freeze implementation. Freeze this script object
+     * @return the frozen script object
+     */
+    public ScriptObjectMirror freeze() {
+        return inGlobal(new Callable<ScriptObjectMirror>() {
+            @Override public ScriptObjectMirror call() {
+                getScriptObject().freeze();
+                return ScriptObjectMirror.this;
+            }
+        });
+    }
+
+    /**
+     * Check whether this script object is frozen
+     * @return true if frozen
+     */
+    public boolean isFrozen() {
+        return inGlobal(new Callable<Boolean>() {
+            @Override public Boolean call() {
+                return getScriptObject().isFrozen();
+            }
+        });
+    }
+
+    // ECMAScript instanceof check
+
+    /**
+     * Checking whether a script object is an instance of another by
+     * walking the proto chain
+     *
+     * @param instance instace to check
+     * @return true if 'instance' is an instance of this object
+     */
+    public boolean isInstance(final ScriptObjectMirror instance) {
+        // if not belongs to my global scope, return false
+        if (instance == null || global != instance.global) {
+            return false;
+        }
+
+        return inGlobal(new Callable<Boolean>() {
+            @Override public Boolean call() {
+                return getScriptObject().isInstance(instance.getScriptObject());
+            }
+        });
+    }
+
+    /**
+     * Utility to check if given object is ECMAScript undefined value
+     *
+     * @param obj object to check
+     * @return true if 'obj' is ECMAScript undefined value
+     */
+    public static boolean isUndefined(final Object obj) {
+        return obj == ScriptRuntime.UNDEFINED;
+    }
+
+    /**
+     * is this a function object?
+     *
+     * @return if this mirror wraps a ECMAScript function instance
+     */
+    public boolean isFunction() {
+        return getScriptObject() instanceof ScriptFunction;
+    }
+
+    /**
+     * is this a 'use strict' function object?
+     *
+     * @return true if this mirror represents a ECMAScript 'use strict' function
+     */
+    public boolean isStrictFunction() {
+        return isFunction() && ((ScriptFunction)getScriptObject()).isStrict();
+    }
+
+    /**
+     * is this an array object?
+     *
+     * @return if this mirror wraps a ECMAScript array object
+     */
+    public boolean isArray() {
+        return getScriptObject().isArray();
+    }
+
+    // These are public only so that Context can access these.
+
+    /**
+     * Make a script object mirror on given object if needed.
+     *
+     * @param obj object to be wrapped
+     * @param homeGlobal global to which this object belongs
+     * @return wrapped object
+     */
+    public static Object wrap(final Object obj, final ScriptObject homeGlobal) {
         return (obj instanceof ScriptObject) ? new ScriptObjectMirror((ScriptObject)obj, homeGlobal) : obj;
     }
 
-    static Object unwrap(final Object obj, final ScriptObject homeGlobal) {
+    /**
+     * Unwrap a script object mirror if needed.
+     *
+     * @param obj object to be unwrapped
+     * @param homeGlobal global to which this object belongs
+     * @return unwrapped object
+     */
+    public static Object unwrap(final Object obj, final ScriptObject homeGlobal) {
         if (obj instanceof ScriptObjectMirror) {
             final ScriptObjectMirror mirror = (ScriptObjectMirror)obj;
             return (mirror.global == homeGlobal)? mirror.sobj : obj;
@@ -293,7 +578,14 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
         return obj;
     }
 
-    static Object[] wrapArray(final Object[] args, final ScriptObject homeGlobal) {
+    /**
+     * Wrap an array of object to script object mirrors if needed.
+     *
+     * @param args array to be unwrapped
+     * @param homeGlobal global to which this object belongs
+     * @return wrapped array
+     */
+    public static Object[] wrapArray(final Object[] args, final ScriptObject homeGlobal) {
         if (args == null || args.length == 0) {
             return args;
         }
@@ -307,7 +599,14 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
         return newArgs;
     }
 
-    static Object[] unwrapArray(final Object[] args, final ScriptObject homeGlobal) {
+    /**
+     * Unwrap an array of script object mirrors if needed.
+     *
+     * @param args array to be unwrapped
+     * @param homeGlobal global to which this object belongs
+     * @return unwrapped array
+     */
+    public static Object[] unwrapArray(final Object[] args, final ScriptObject homeGlobal) {
         if (args == null || args.length == 0) {
             return args;
         }
@@ -319,5 +618,14 @@ final class ScriptObjectMirror extends JSObject implements Map<Object, Object> {
             index++;
         }
         return newArgs;
+    }
+
+    // package-privates below this.
+    ScriptObject getScriptObject() {
+        return sobj;
+    }
+
+    static Object translateUndefined(Object obj) {
+        return (obj == ScriptRuntime.UNDEFINED)? null : obj;
     }
 }

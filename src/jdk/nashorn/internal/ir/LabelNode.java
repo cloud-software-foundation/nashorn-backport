@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,66 +25,53 @@
 
 package jdk.nashorn.internal.ir;
 
-import jdk.nashorn.internal.ir.annotations.Reference;
+import jdk.nashorn.internal.ir.annotations.Immutable;
 import jdk.nashorn.internal.ir.visitor.NodeVisitor;
-import jdk.nashorn.internal.runtime.Source;
 
 /**
  * IR representation for a labeled statement.
- *
  */
-
-public class LabelNode extends Node {
+@Immutable
+public final class LabelNode extends LexicalContextNode {
     /** Label ident. */
-    private IdentNode label;
+    private final IdentNode label;
 
     /** Statements. */
-    private Block body;
-
-    /** Node to break from. */
-    @Reference
-    private Node breakNode;
-
-    /** Node to continue. */
-    @Reference
-    private Node continueNode;
+    private final Block body;
 
     /**
      * Constructor
      *
-     * @param source the source
-     * @param token  token
-     * @param finish finish
-     * @param label  label identifier
-     * @param body   body of label node
+     * @param lineNumber line number
+     * @param token      token
+     * @param finish     finish
+     * @param label      label identifier
+     * @param body       body of label node
      */
-    public LabelNode(final Source source, final long token, final int finish, final IdentNode label, final Block body) {
-        super(source, token, finish);
+    public LabelNode(final int lineNumber, final long token, final int finish, final IdentNode label, final Block body) {
+        super(lineNumber, token, finish);
 
         this.label = label;
         this.body  = body;
     }
 
-    private LabelNode(final LabelNode labelNode, final CopyState cs) {
+    private LabelNode(final LabelNode labelNode, final IdentNode label, final Block body) {
         super(labelNode);
-
-        label        = (IdentNode)cs.existingOrCopy(labelNode.label);
-        body         = (Block)cs.existingOrCopy(labelNode.body);
-        breakNode    = cs.existingOrSame(labelNode.breakNode);
-        continueNode = cs.existingOrSame(labelNode.continueNode);
+        this.label = label;
+        this.body  = body;
     }
 
     @Override
-    protected Node copy(final CopyState cs) {
-        return new LabelNode(this, cs);
+    public boolean isTerminal() {
+        return body.isTerminal();
     }
 
     @Override
-    public Node accept(final NodeVisitor visitor) {
-        if (visitor.enter(this) != null) {
-            label = (IdentNode)label.accept(visitor);
-            body  = (Block)body.accept(visitor);
-            return visitor.leave(this);
+    public Node accept(final LexicalContext lc, final NodeVisitor<? extends LexicalContext> visitor) {
+        if (visitor.enterLabelNode(this)) {
+            return visitor.leaveLabelNode(
+                setLabel(lc, (IdentNode)label.accept(visitor)).
+                setBody(lc, (Block)body.accept(visitor)));
         }
 
         return this;
@@ -106,42 +93,15 @@ public class LabelNode extends Node {
 
     /**
      * Reset the body of the node
+     * @param lc lexical context
      * @param body new body
+     * @return new for node if changed or existing if not
      */
-    public void setBody(final Block body) {
-        this.body = body;
-    }
-
-    /**
-     * Get the break node for this node
-     * @return the break node
-     */
-    public Node getBreakNode() {
-        return breakNode;
-    }
-
-    /**
-     * Reset the break node for this node
-     * @param breakNode the break node
-     */
-    public void setBreakNode(final Node breakNode) {
-        this.breakNode = breakNode;
-    }
-
-    /**
-     * Get the continue node for this node
-     * @return the continue node
-     */
-    public Node getContinueNode() {
-        return continueNode;
-    }
-
-    /**
-     * Reset the continue node for this node
-     * @param continueNode the continue node
-     */
-    public void setContinueNode(final Node continueNode) {
-        this.continueNode = continueNode;
+    public LabelNode setBody(final LexicalContext lc, final Block body) {
+        if (this.body == body) {
+            return this;
+        }
+        return Node.replaceInLexicalContext(lc, this, new LabelNode(this, label, body));
     }
 
     /**
@@ -150,6 +110,13 @@ public class LabelNode extends Node {
      */
     public IdentNode getLabel() {
         return label;
+    }
+
+    private LabelNode setLabel(final LexicalContext lc, final IdentNode label) {
+        if (this.label == label) {
+            return this;
+        }
+        return Node.replaceInLexicalContext(lc, this, new LabelNode(this, label, body));
     }
 
 }

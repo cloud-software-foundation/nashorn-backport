@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,27 +25,33 @@
 
 package jdk.nashorn.internal.ir;
 
-import jdk.nashorn.internal.codegen.MethodEmitter;
-import jdk.nashorn.internal.runtime.Source;
+import java.util.Arrays;
+import java.util.List;
+
+import jdk.nashorn.internal.codegen.Label;
+import jdk.nashorn.internal.ir.annotations.Immutable;
 
 /**
  * This class represents a node from which control flow can execute
  * a {@code break} statement
  */
-public abstract class BreakableNode extends Node {
+@Immutable
+public abstract class BreakableNode extends LexicalContextNode {
 
     /** break label. */
-    protected MethodEmitter.Label breakLabel;
+    protected final Label breakLabel;
 
     /**
      * Constructor
      *
-     * @param source   source code
-     * @param token    token
-     * @param finish   finish
+     * @param lineNumber line number
+     * @param token      token
+     * @param finish     finish
+     * @param breakLabel break label
      */
-    public BreakableNode(final Source source, final long token, final int finish) {
-        super(source, token, finish);
+    protected BreakableNode(final int lineNumber, final long token, final int finish, final Label breakLabel) {
+        super(lineNumber, token, finish);
+        this.breakLabel = breakLabel;
     }
 
     /**
@@ -55,14 +61,37 @@ public abstract class BreakableNode extends Node {
      */
     protected BreakableNode(final BreakableNode breakableNode) {
         super(breakableNode);
+        this.breakLabel = new Label(breakableNode.getBreakLabel());
+    }
+
+    @Override
+    public abstract Node ensureUniqueLabels(final LexicalContext lc);
+
+    /**
+     * Check whether this can be broken out from without using a label,
+     * e.g. everything but Blocks, basically
+     * @return true if breakable without label
+     */
+    protected boolean isBreakableWithoutLabel() {
+        return true;
     }
 
     /**
      * Return the break label, i.e. the location to go to on break.
      * @return the break label
      */
-    public MethodEmitter.Label getBreakLabel() {
+    public Label getBreakLabel() {
         return breakLabel;
+    }
+
+    /**
+     * Return the labels associated with this node. Breakable nodes that
+     * aren't LoopNodes only have a break label - the location immediately
+     * afterwards the node in code
+     * @return list of labels representing locations around this node
+     */
+    public List<Label> getLabels() {
+        return Arrays.asList(breakLabel);
     }
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,48 +26,54 @@
 package jdk.nashorn.internal.ir;
 
 import jdk.nashorn.internal.codegen.types.Type;
+import jdk.nashorn.internal.ir.annotations.Immutable;
 import jdk.nashorn.internal.ir.visitor.NodeVisitor;
 import jdk.nashorn.internal.parser.TokenType;
-import jdk.nashorn.internal.runtime.Source;
 
 /**
  * BinaryNode nodes represent two operand operations.
  */
-public class BinaryNode extends UnaryNode {
+@Immutable
+public final class BinaryNode extends Node implements Assignment<Node> {
     /** Left hand side argument. */
-    protected Node lhs;
+    private final Node lhs;
+
+    private final Node rhs;
 
     /**
      * Constructor
      *
-     * @param source source code
      * @param token  token
      * @param lhs    left hand side
      * @param rhs    right hand side
      */
-    public BinaryNode(final Source source, final long token, final Node lhs, final Node rhs) {
-        super(source, token, rhs);
-
-        start  = lhs.getStart();
-        finish = rhs.getFinish();
-
-        this.lhs = lhs;
+    public BinaryNode(final long token, final Node lhs, final Node rhs) {
+        super(token, lhs.getStart(), rhs.getFinish());
+        this.lhs   = lhs;
+        this.rhs   = rhs;
     }
 
-    /**
-     * Copy constructor
-     *
-     * @param binaryNode the binary node
-     * @param cs         copy state
-     */
-    protected BinaryNode(final BinaryNode binaryNode, final CopyState cs) {
-        super(binaryNode, cs);
-        lhs = cs.existingOrCopy(binaryNode.lhs);
+    private BinaryNode(final BinaryNode binaryNode, final Node lhs, final Node rhs) {
+        super(binaryNode);
+        this.lhs = lhs;
+        this.rhs = rhs;
     }
 
     @Override
-    protected Node copy(final CopyState cs) {
-        return new BinaryNode(this, cs);
+    public boolean isComparison() {
+        switch (tokenType()) {
+        case EQ:
+        case EQ_STRICT:
+        case NE:
+        case NE_STRICT:
+        case LE:
+        case LT:
+        case GE:
+        case GT:
+            return true;
+        default:
+            return false;
+        }
     }
 
     /**
@@ -140,8 +146,8 @@ public class BinaryNode extends UnaryNode {
     }
 
     @Override
-    public void setAssignmentDest(final Node node) {
-        setLHS(node);
+    public Node setAssignmentDest(Node n) {
+        return setLHS(n);
     }
 
     @Override
@@ -149,34 +155,14 @@ public class BinaryNode extends UnaryNode {
         return rhs();
     }
 
-    @Override
-    public void setAssignmentSource(final Node source) {
-        setRHS(source);
-    }
-
-    @Override
-    public boolean equals(final Object other) {
-        if (!super.equals(other)) {
-            return false;
-        }
-        return lhs.equals(((BinaryNode)other).lhs());
-    }
-
-    @Override
-    public int hashCode() {
-        return super.hashCode() ^ lhs().hashCode();
-    }
-
     /**
      * Assist in IR navigation.
      * @param visitor IR navigating visitor.
      */
     @Override
-    public Node accept(final NodeVisitor visitor) {
-        if (visitor.enter(this) != null) {
-            lhs = lhs.accept(visitor);
-            rhs = rhs.accept(visitor);
-            return visitor.leave(this);
+    public Node accept(final NodeVisitor<? extends LexicalContext> visitor) {
+        if (visitor.enterBinaryNode(this)) {
+            return visitor.leaveBinaryNode(setLHS(lhs.accept(visitor)).setRHS(rhs.accept(visitor)));
         }
 
         return this;
@@ -237,10 +223,35 @@ public class BinaryNode extends UnaryNode {
     }
 
     /**
+     * Get the right hand side expression for this node
+     * @return the left hand side expression
+     */
+    public Node rhs() {
+        return rhs;
+    }
+
+    /**
      * Set the left hand side expression for this node
      * @param lhs new left hand side expression
+     * @return a node equivalent to this one except for the requested change.
      */
-    public void setLHS(final Node lhs) {
-        this.lhs = lhs;
+    public BinaryNode setLHS(final Node lhs) {
+        if (this.lhs == lhs) {
+            return this;
+        }
+        return new BinaryNode(this, lhs, rhs);
     }
+
+    /**
+     * Set the right hand side expression for this node
+     * @param rhs new left hand side expression
+     * @return a node equivalent to this one except for the requested change.
+     */
+    public BinaryNode setRHS(final Node rhs) {
+        if (this.rhs == rhs) {
+            return this;
+        }
+        return new BinaryNode(this, lhs, rhs);
+    }
+
 }

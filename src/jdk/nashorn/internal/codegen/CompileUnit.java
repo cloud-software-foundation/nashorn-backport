@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -37,6 +37,8 @@ public class CompileUnit {
 
     private long weight;
 
+    private Class<?> clazz;
+
     CompileUnit(final String className, final ClassEmitter classEmitter) {
         this(className, classEmitter, 0L);
     }
@@ -48,10 +50,28 @@ public class CompileUnit {
     }
 
     /**
+     * Return the class that contains the code for this unit, null if not
+     * generated yet
+     *
+     * @return class with compile unit code
+     */
+    public Class<?> getCode() {
+        return clazz;
+    }
+
+    /**
+     * Set class when it exists. Only accessible from compiler
+     * @param clazz class with code for this compile unit
+     */
+    void setCode(final Class<?> clazz) {
+        this.clazz = clazz;
+    }
+
+    /**
      * Add weight to this compile unit
      * @param w weight to add
      */
-    public void addWeight(final long w) {
+    void addWeight(final long w) {
         this.weight += w;
     }
 
@@ -59,7 +79,7 @@ public class CompileUnit {
      * Get the current weight of the compile unit.
      * @return the unit's weight
      */
-    public long getWeight() {
+    long getWeight() {
         return weight;
     }
 

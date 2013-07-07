@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,12 +30,14 @@ import static jdk.nashorn.internal.runtime.ECMAErrors.typeError;
 import static jdk.nashorn.internal.runtime.JSType.isRepresentableAsInt;
 import static jdk.nashorn.internal.runtime.JSType.isRepresentableAsLong;
 import static jdk.nashorn.internal.runtime.ScriptRuntime.UNDEFINED;
-import static jdk.nashorn.internal.runtime.linker.Lookup.MH;
+import static jdk.nashorn.internal.lookup.Lookup.MH;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.text.NumberFormat;
 import java.util.Locale;
+import jdk.internal.dynalink.linker.GuardedInvocation;
+import jdk.internal.dynalink.linker.LinkRequest;
 import jdk.nashorn.internal.objects.annotations.Attribute;
 import jdk.nashorn.internal.objects.annotations.Constructor;
 import jdk.nashorn.internal.objects.annotations.Function;
@@ -43,11 +45,11 @@ import jdk.nashorn.internal.objects.annotations.Property;
 import jdk.nashorn.internal.objects.annotations.ScriptClass;
 import jdk.nashorn.internal.objects.annotations.Where;
 import jdk.nashorn.internal.runtime.JSType;
+import jdk.nashorn.internal.runtime.PropertyMap;
 import jdk.nashorn.internal.runtime.ScriptObject;
 import jdk.nashorn.internal.runtime.ScriptRuntime;
-import jdk.nashorn.internal.runtime.linker.NashornCallSiteDescriptor;
+import jdk.nashorn.internal.lookup.MethodHandleFactory;
 import jdk.nashorn.internal.runtime.linker.PrimitiveLookup;
-import org.dynalang.dynalink.linker.GuardedInvocation;
 
 /**
  * ECMA 15.7 Number Objects.
@@ -56,7 +58,7 @@ import org.dynalang.dynalink.linker.GuardedInvocation;
 @ScriptClass("Number")
 public final class NativeNumber extends ScriptObject {
 
-    private static final MethodHandle WRAPFILTER = findWrapFilter();
+    static final MethodHandle WRAPFILTER = findWrapFilter();
 
     /** ECMA 15.7.3.2 largest positive finite value */
     @Property(attributes = Attribute.NON_ENUMERABLE_CONSTANT, where = Where.CONSTRUCTOR)
@@ -82,16 +84,28 @@ public final class NativeNumber extends ScriptObject {
     private final boolean isInt;
     private final boolean isLong;
 
-    NativeNumber(final double value) {
-        this(value, Global.instance().getNumberPrototype());
+    // initialized by nasgen
+    private static PropertyMap $nasgenmap$;
+
+    static PropertyMap getInitialMap() {
+        return $nasgenmap$;
     }
 
-    private NativeNumber(final double value, final ScriptObject proto) {
+    private NativeNumber(final double value, final ScriptObject proto, final PropertyMap map) {
+        super(proto, map);
         this.value = value;
         this.isInt  = isRepresentableAsInt(value);
         this.isLong = isRepresentableAsLong(value);
-        this.setProto(proto);
     }
+
+    NativeNumber(final double value, final Global global) {
+        this(value, global.getNumberPrototype(), global.getNumberMap());
+    }
+
+    private NativeNumber(final double value) {
+        this(value, Global.instance());
+    }
+
 
     @Override
     public String safeToString() {
@@ -160,16 +174,7 @@ public final class NativeNumber extends ScriptObject {
     public static Object constructor(final boolean newObj, final Object self, final Object... args) {
         final double num = (args.length > 0) ? JSType.toNumber(args[0]) : 0.0;
 
-        if (newObj) {
-            final ScriptObject proto =
-                (self instanceof ScriptObject) ?
-                    ((ScriptObject)self).getProto() :
-                    Global.instance().getNumberPrototype();
-
-            return new NativeNumber(num, proto);
-        }
-
-        return num;
+        return newObj? new NativeNumber(num) : num;
     }
 
     /**
@@ -184,8 +189,7 @@ public final class NativeNumber extends ScriptObject {
     public static Object toFixed(final Object self, final Object fractionDigits) {
         final int f = JSType.toInteger(fractionDigits);
         if (f < 0 || f > 20) {
-            rangeError(Global.instance(), "invalid.fraction.digits", "toFixed");
-            return UNDEFINED;
+            throw rangeError("invalid.fraction.digits", "toFixed");
         }
 
         final double x = getNumberValue(self);
@@ -226,8 +230,7 @@ public final class NativeNumber extends ScriptObject {
         }
 
         if (fractionDigits != UNDEFINED && (f < 0 || f > 20)) {
-            rangeError(Global.instance(), "invalid.fraction.digits", "toExponential");
-            return UNDEFINED;
+            throw rangeError("invalid.fraction.digits", "toExponential");
         }
 
         final String res = String.format(Locale.US, "%1." + f + "e", x);
@@ -257,8 +260,7 @@ public final class NativeNumber extends ScriptObject {
         }
 
         if (p < 1 || p > 21) {
-            rangeError(Global.instance(), "invalid.precision");
-            return UNDEFINED;
+            throw rangeError("invalid.precision");
         }
 
         // workaround for http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=6469160
@@ -282,7 +284,7 @@ public final class NativeNumber extends ScriptObject {
             final int intRadix = JSType.toInteger(radix);
             if (intRadix != 10) {
                 if (intRadix < 2 || intRadix > 36) {
-                    rangeError(Global.instance(), "invalid.radix");
+                    throw rangeError("invalid.radix");
                 }
                 return JSType.toString(getNumberValue(self), intRadix);
             }
@@ -316,12 +318,12 @@ public final class NativeNumber extends ScriptObject {
 
     /**
      * Lookup the appropriate method for an invoke dynamic call.
-     * @param desc The call site descriptor.
+     * @param request  The link request
      * @param receiver receiver of call
      * @return Link to be invoked at call site.
      */
-    public static GuardedInvocation lookupPrimitive(final NashornCallSiteDescriptor desc, final Object receiver) {
-        return PrimitiveLookup.lookupPrimitive(desc, Number.class, new NativeNumber(((Number)receiver).doubleValue()), WRAPFILTER);
+    public static GuardedInvocation lookupPrimitive(final LinkRequest request, final Object receiver) {
+        return PrimitiveLookup.lookupPrimitive(request, Number.class, new NativeNumber(((Number)receiver).doubleValue()), WRAPFILTER);
     }
 
     @SuppressWarnings("unused")
@@ -337,8 +339,7 @@ public final class NativeNumber extends ScriptObject {
         } else if (self != null && self == Global.instance().getNumberPrototype()) {
             return 0.0;
         } else {
-            typeError(Global.instance(), "not.a.number", ScriptRuntime.safeToString(self));
-            return Double.NaN;
+            throw typeError("not.a.number", ScriptRuntime.safeToString(self));
         }
     }
 
@@ -379,10 +380,6 @@ public final class NativeNumber extends ScriptObject {
     }
 
     private static MethodHandle findWrapFilter() {
-        try {
-            return MethodHandles.lookup().findStatic(NativeNumber.class, "wrapFilter", MH.type(NativeNumber.class, Object.class));
-        } catch (final NoSuchMethodException | IllegalAccessException e) {
-            throw new AssertionError(e);
-        }
+        return MH.findStatic(MethodHandles.lookup(), NativeNumber.class, "wrapFilter", MH.type(NativeNumber.class, Object.class));
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -293,6 +293,29 @@ public abstract class ArrayData {
      * @return new array data (or same)
      */
     public abstract ArrayData set(int index, double value, boolean strict);
+
+    /**
+     * Set an empty value at a given index. Should only affect Object array.
+     *
+     * @param index the index
+     * @return new array data (or same)
+     */
+    public ArrayData setEmpty(final int index) {
+        // Do nothing.
+        return this;
+    }
+
+    /**
+     * Set an empty value for a given range. Should only affect Object array.
+     *
+     * @param lo range low end
+     * @param hi range high end
+     * @return new array data (or same)
+     */
+    public ArrayData setEmpty(final long lo, final long hi) {
+        // Do nothing.
+        return this;
+    }
 
     /**
      * Get an int value from a given index

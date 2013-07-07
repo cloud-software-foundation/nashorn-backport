@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -59,17 +59,8 @@ public class Window {
         return self.setTimeout(code, delay);
     }
 
-    public static void clearTimeout(final Window self, final int id) {
-        self.clearTimeout(id);
-    }
-
     public int setTimeout(final String code, final int delay) {
         System.out.println("window.setTimeout: " + delay + ", code: " + code);
         return 0;
     }
-
-    public void clearTimeout(final int id) {
-        System.out.println("window.clearTimeout: " + id);
-    }
-
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,14 +29,21 @@ import static jdk.nashorn.internal.runtime.ECMAErrors.typeError;
 import static jdk.nashorn.internal.runtime.ScriptRuntime.UNDEFINED;
 
 import java.util.List;
+
+import jdk.nashorn.api.scripting.ScriptObjectMirror;
 import jdk.nashorn.internal.objects.annotations.Attribute;
 import jdk.nashorn.internal.objects.annotations.Constructor;
 import jdk.nashorn.internal.objects.annotations.Function;
 import jdk.nashorn.internal.objects.annotations.ScriptClass;
+import jdk.nashorn.internal.parser.Parser;
+import jdk.nashorn.internal.runtime.Context;
 import jdk.nashorn.internal.runtime.JSType;
+import jdk.nashorn.internal.runtime.ParserException;
+import jdk.nashorn.internal.runtime.PropertyMap;
 import jdk.nashorn.internal.runtime.ScriptFunction;
 import jdk.nashorn.internal.runtime.ScriptObject;
 import jdk.nashorn.internal.runtime.ScriptRuntime;
+import jdk.nashorn.internal.runtime.Source;
 
 /**
  * ECMA 15.3 Function Objects
@@ -47,8 +54,14 @@ import jdk.nashorn.internal.runtime.ScriptRuntime;
  */
 @ScriptClass("Function")
 public final class NativeFunction {
+
+    // initialized by nasgen
+    @SuppressWarnings("unused")
+    private static PropertyMap $nasgenmap$;
+
     // do *not* create me!
     private NativeFunction() {
+        throw new UnsupportedOperationException();
     }
 
     /**
@@ -60,21 +73,9 @@ public final class NativeFunction {
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object toString(final Object self) {
         if (!(self instanceof ScriptFunction)) {
-            typeError(Global.instance(), "not.a.function", ScriptRuntime.safeToString(self));
-            return UNDEFINED;
+            throw typeError("not.a.function", ScriptRuntime.safeToString(self));
         }
         return ((ScriptFunction)self).toSource();
-    }
-
-    private static Object convertThis(final ScriptFunction func, final Object thiz) {
-        if (!(thiz instanceof ScriptObject) && !func.isStrict() && !func.isBuiltin()) {
-            if (thiz == UNDEFINED || thiz == null) {
-                return Global.instance();
-            }
-            return JSType.toObject(Global.instance(), thiz);
-        }
-
-        return thiz;
     }
 
     /**
@@ -88,29 +89,18 @@ public final class NativeFunction {
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object apply(final Object self, final Object thiz, final Object array) {
         if (!(self instanceof ScriptFunction)) {
-            typeError(Global.instance(), "not.a.function", ScriptRuntime.safeToString(self));
-            return UNDEFINED;
+            throw typeError("not.a.function", ScriptRuntime.safeToString(self));
         }
 
         Object[] args = null;
 
-        if (ScriptObject.isArray(array)) {
-            args = ((NativeArray)array).asObjectArray();
-        } else if (array instanceof ScriptObject) {
+        if (array instanceof ScriptObject) {
             // look for array-like object
             final ScriptObject sobj = (ScriptObject)array;
             final Object       len  = sobj.getLength();
-
-            if (len == UNDEFINED || len == null) {
-                typeError(Global.instance(), "function.apply.expects.array");
-            }
-
             final int n = (int)JSType.toUint32(len);
-            if (n != JSType.toNumber(len)) {
-                typeError(Global.instance(), "function.apply.expects.array");
-            }
 
-            args = new Object[(int)JSType.toUint32(len)];
+            args = new Object[n];
             for (int i = 0; i < args.length; i++) {
                 args[i] = sobj.get(i);
             }
@@ -121,16 +111,21 @@ public final class NativeFunction {
             list.toArray(args = new Object[list.size()]);
         } else if (array == null || array == UNDEFINED) {
             args = ScriptRuntime.EMPTY_ARRAY;
+        } else if (array instanceof ScriptObjectMirror) {
+            // look for array-like ScriptObjectMirror object
+            final ScriptObjectMirror mirror = (ScriptObjectMirror)array;
+            final Object       len  = mirror.containsKey("length")? mirror.getMember("length") : Integer.valueOf(0);
+            final int n = (int)JSType.toUint32(len);
+
+            args = new Object[n];
+            for (int i = 0; i < args.length; i++) {
+                args[i] = mirror.containsKey(i)? mirror.getSlot(i) : UNDEFINED;
+            }
         } else {
-            typeError(Global.instance(), "function.apply.expects.array");
+            throw typeError("function.apply.expects.array");
         }
 
-        final ScriptFunction func = (ScriptFunction)self;
-        // As per ECMA 5.1 spec, "this" is passed "as is". But the spec.
-        // says 'this' is transformed when callee frame is created if callee
-        // is a non-strict function. So, we convert 'this' here if callee is
-        // not strict and not builtin function.
-        return ScriptRuntime.apply(func, convertThis(func, thiz), args);
+        return ScriptRuntime.apply((ScriptFunction)self, thiz, args);
     }
 
     /**
@@ -143,8 +138,7 @@ public final class NativeFunction {
     @Function(attributes = Attribute.NOT_ENUMERABLE, arity = 1)
     public static Object call(final Object self, final Object... args) {
         if (!(self instanceof ScriptFunction)) {
-            typeError(Global.instance(), "not.a.function", ScriptRuntime.safeToString(self));
-            return UNDEFINED;
+            throw typeError("not.a.function", ScriptRuntime.safeToString(self));
         }
 
         Object thiz = (args.length == 0) ? UNDEFINED : args[0];
@@ -157,15 +151,7 @@ public final class NativeFunction {
             arguments = ScriptRuntime.EMPTY_ARRAY;
         }
 
-        final ScriptFunction func = (ScriptFunction)self;
-
-        // As per ECMA 5.1 spec, "this" is passed "as is". But the spec.
-        // says 'this' is transformed when callee frame is created if callee
-        // is a non-strict function. So, we convert 'this' here if callee is
-        // not strict and not builtin function.
-        thiz = convertThis(func, thiz);
-
-        return ScriptRuntime.apply(func, thiz, arguments);
+        return ScriptRuntime.apply((ScriptFunction)self, thiz, arguments);
     }
 
     /**
@@ -178,16 +164,10 @@ public final class NativeFunction {
     @Function(attributes = Attribute.NOT_ENUMERABLE, arity = 1)
     public static Object bind(final Object self, final Object... args) {
         if (!(self instanceof ScriptFunction)) {
-            typeError(Global.instance(), "not.a.function", ScriptRuntime.safeToString(self));
-            return UNDEFINED;
+            throw typeError("not.a.function", ScriptRuntime.safeToString(self));
         }
 
-        // As per ECMA 5.1 spec, "this" is passed "as is". But the spec.
-        // says 'this' is transformed when callee frame is created if callee
-        // is a non-strict function. So, we convert 'this' here if callee is
-        // not strict. Note that all builtin functions are marked as strict and
-        // so 'this' transformation is not done for such functions.
-        final Object thiz = convertThis((ScriptFunction)self, (args.length == 0) ? UNDEFINED : args[0]);
+        final Object thiz = (args.length == 0) ? UNDEFINED : args[0];
 
         Object[] arguments;
         if (args.length > 1) {
@@ -197,7 +177,7 @@ public final class NativeFunction {
             arguments = ScriptRuntime.EMPTY_ARRAY;
         }
 
-        return ((ScriptFunction)self).makeBoundFunction(thiz, arguments);
+        return ((ScriptFunctionImpl)self).makeBoundFunction(thiz, arguments);
     }
 
     /**
@@ -209,8 +189,7 @@ public final class NativeFunction {
     @Function(attributes = Attribute.NOT_ENUMERABLE)
     public static Object toSource(final Object self) {
         if (!(self instanceof ScriptFunction)) {
-            typeError(Global.instance(), "not.a.function", ScriptRuntime.safeToString(self));
-            return UNDEFINED;
+            throw typeError("not.a.function", ScriptRuntime.safeToString(self));
         }
         return ((ScriptFunction)self).toSource();
     }
@@ -231,22 +210,51 @@ public final class NativeFunction {
 
         sb.append("(function (");
         if (args.length > 0) {
+            final StringBuilder paramListBuf = new StringBuilder();
             for (int i = 0; i < args.length - 1; i++) {
-                sb.append(JSType.toString(args[i]));
+                paramListBuf.append(JSType.toString(args[i]));
                 if (i < args.length - 2) {
-                    sb.append(",");
+                    paramListBuf.append(",");
                 }
+            }
+
+            final String paramList = paramListBuf.toString();
+            if (! paramList.isEmpty()) {
+                checkFunctionParameters(paramList);
+                sb.append(paramList);
             }
         }
         sb.append(") {\n");
         if (args.length > 0) {
-            sb.append(JSType.toString(args[args.length - 1]));
+            final String funcBody = JSType.toString(args[args.length - 1]);
+            checkFunctionBody(funcBody);
+            sb.append(funcBody);
             sb.append('\n');
         }
         sb.append("})");
 
         final Global global = Global.instance();
 
-        return Global.directEval(global, sb.toString(), global, "<function>", Global.isStrict());
+        return Global.directEval(global, sb.toString(), global, "<function>", global.isStrictContext());
+    }
+
+    private static void checkFunctionParameters(final String params) {
+        final Source src = new Source("<function>", params);
+        final Parser parser = new Parser(Global.getEnv(), src, new Context.ThrowErrorManager());
+        try {
+            parser.parseFormalParameterList();
+        } catch (final ParserException pe) {
+            pe.throwAsEcmaException();
+        }
+    }
+
+    private static void checkFunctionBody(final String funcBody) {
+        final Source src = new Source("<function>", funcBody);
+        final Parser parser = new Parser(Global.getEnv(), src, new Context.ThrowErrorManager());
+        try {
+            parser.parseFunctionBody();
+        } catch (final ParserException pe) {
+            pe.throwAsEcmaException();
+        }
     }
 }

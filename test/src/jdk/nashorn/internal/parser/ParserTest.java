@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,8 +26,6 @@
 package jdk.nashorn.internal.parser;
 
 import java.io.File;
-import jdk.nashorn.internal.codegen.Compiler;
-import jdk.nashorn.internal.codegen.CompilerConstants;
 import jdk.nashorn.internal.runtime.Context;
 import jdk.nashorn.internal.runtime.ErrorManager;
 import jdk.nashorn.internal.runtime.ScriptObject;
@@ -43,7 +41,6 @@ public class ParserTest {
     private static final boolean VERBOSE   = Boolean.valueOf(System.getProperty("parsertest.verbose"));
     private static final boolean TEST262   = Boolean.valueOf(System.getProperty("parsertest.test262"));
 
-    private static final String ES5CONFORM_DIR    = System.getProperty("es5conform.testcases.dir");
     private static final String TEST_BASIC_DIR  = System.getProperty("test.basic.dir");
     private static final String TEST262_SUITE_DIR = System.getProperty("test262.suite.dir");
 
@@ -66,7 +63,7 @@ public class ParserTest {
         options.set("scripting", true);
 
         ErrorManager errors = new ErrorManager();
-        this.context = new Context(options, errors);
+        this.context = new Context(options, errors, Thread.currentThread().getContextClassLoader());
         this.global = context.createGlobal();
     }
 
@@ -80,7 +77,6 @@ public class ParserTest {
                 }
             });
         }
-        parseTestSet(ES5CONFORM_DIR, null);
         parseTestSet(TEST_BASIC_DIR, null);
     }
 
@@ -158,10 +154,7 @@ public class ParserTest {
                 Context.setGlobal(global);
             }
             final Source   source   = new Source(file.getAbsolutePath(), buffer);
-            final Compiler compiler = Compiler.compiler(source, context, errors, context._strict);
-
-            final Parser parser = new Parser(compiler);
-            parser.parse(CompilerConstants.RUN_SCRIPT.tag());
+            new Parser(context.getEnv(), source, errors).parse();
             if (errors.getNumberOfErrors() > 0) {
                 log("Parse failed: " + file.getAbsolutePath());
                 failed++;

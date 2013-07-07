@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,6 +25,8 @@
 
 package jdk.nashorn.internal.runtime.arrays;
 
+import java.util.NoSuchElementException;
+
 /**
  * Dummy array iterator that has no elements
  */
@@ -41,11 +43,11 @@ final class EmptyArrayLikeIterator extends ArrayLikeIterator<Object> {
 
     @Override
     public Object next() {
-        return null;
+        throw new NoSuchElementException();
     }
 
     @Override
-    public int getLength() {
+    public long getLength() {
         return 0;
     }
 }

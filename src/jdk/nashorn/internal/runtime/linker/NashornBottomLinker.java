@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,18 +27,17 @@ package jdk.nashorn.internal.runtime.linker;
 
 import static jdk.nashorn.internal.runtime.ECMAErrors.typeError;
 import static jdk.nashorn.internal.runtime.ScriptRuntime.UNDEFINED;
-import static jdk.nashorn.internal.runtime.linker.Lookup.MH;
+import static jdk.nashorn.internal.lookup.Lookup.MH;
 
 import java.lang.invoke.MethodHandle;
-import jdk.nashorn.internal.runtime.Context;
-import jdk.nashorn.internal.runtime.ScriptObject;
+import jdk.internal.dynalink.CallSiteDescriptor;
+import jdk.internal.dynalink.beans.BeansLinker;
+import jdk.internal.dynalink.linker.GuardedInvocation;
+import jdk.internal.dynalink.linker.GuardingDynamicLinker;
+import jdk.internal.dynalink.linker.LinkRequest;
+import jdk.internal.dynalink.linker.LinkerServices;
+import jdk.internal.dynalink.support.Guards;
 import jdk.nashorn.internal.runtime.ScriptRuntime;
-import org.dynalang.dynalink.CallSiteDescriptor;
-import org.dynalang.dynalink.linker.GuardedInvocation;
-import org.dynalang.dynalink.linker.GuardingDynamicLinker;
-import org.dynalang.dynalink.linker.LinkRequest;
-import org.dynalang.dynalink.linker.LinkerServices;
-import org.dynalang.dynalink.support.Guards;
 
 /**
  * Nashorn bottom linker; used as a last-resort catch-all linker for all linking requests that fall through all other
@@ -47,7 +46,7 @@ import org.dynalang.dynalink.support.Guards;
  * setters for Java objects that couldn't be linked by any other linker, and throw appropriate ECMAScript errors for
  * attempts to invoke arbitrary Java objects as functions or constructors.
  */
-class NashornBottomLinker implements GuardingDynamicLinker {
+final class NashornBottomLinker implements GuardingDynamicLinker {
 
     @Override
     public GuardedInvocation getGuardedInvocation(final LinkRequest linkRequest, final LinkerServices linkerServices)
@@ -80,23 +79,18 @@ class NashornBottomLinker implements GuardingDynamicLinker {
         final String operator = desc.getFirstOperator();
         switch (operator) {
         case "new":
-            if(isJavaDynamicMethod(self)) {
-                typeError(Context.getGlobal(), "method.not.constructor", ScriptRuntime.safeToString(self));
-            } else {
-                typeError(Context.getGlobal(), "not.a.function", ScriptRuntime.safeToString(self));
+            if(BeansLinker.isDynamicMethod(self)) {
+                throw typeError("method.not.constructor", ScriptRuntime.safeToString(self));
             }
-            break;
+            throw typeError("not.a.function", ScriptRuntime.safeToString(self));
         case "call":
-            if(isJavaDynamicMethod(self)) {
-                typeError(Context.getGlobal(), "no.method.matches.args", ScriptRuntime.safeToString(self));
-            } else {
-                typeError(Context.getGlobal(), "not.a.function", ScriptRuntime.safeToString(self));
+            if(BeansLinker.isDynamicMethod(self)) {
+                throw typeError("no.method.matches.args", ScriptRuntime.safeToString(self));
             }
-            break;
+            throw typeError("not.a.function", ScriptRuntime.safeToString(self));
         case "callMethod":
         case "getMethod":
-            typeError(Context.getGlobal(), "no.such.function", getArgument(linkRequest), ScriptRuntime.safeToString(self));
-            break;
+            throw typeError("no.such.function", getArgument(linkRequest), ScriptRuntime.safeToString(self));
         case "getProp":
         case "getElem":
             if (desc.getOperand() != null) {
@@ -115,16 +109,6 @@ class NashornBottomLinker implements GuardingDynamicLinker {
         throw new AssertionError("unknown call type " + desc);
     }
 
-    /**
-     * Returns true if the object is a Dynalink dynamic method. Unfortunately, the dynamic method classes are package
-     * private in Dynalink, so this is the closest we can get to determining it.
-     * @param obj the object we want to test for being a dynamic method
-     * @return true if it is a dynamic method, false otherwise.
-     */
-    private static boolean isJavaDynamicMethod(Object obj) {
-        return obj.getClass().getName().endsWith("DynamicMethod");
-    }
-
     private static GuardedInvocation getInvocation(final MethodHandle handle, final Object self, final LinkerServices linkerServices, final CallSiteDescriptor desc) {
         return Bootstrap.asType(new GuardedInvocation(handle, Guards.getClassGuard(self.getClass())), linkerServices, desc);
     }
@@ -136,26 +120,21 @@ class NashornBottomLinker implements GuardingDynamicLinker {
     }
 
     private static GuardedInvocation linkNull(final LinkRequest linkRequest) {
-        final ScriptObject global = Context.getGlobal();
         final NashornCallSiteDescriptor desc = (NashornCallSiteDescriptor)linkRequest.getCallSiteDescriptor();
         final String operator = desc.getFirstOperator();
         switch (operator) {
         case "new":
         case "call":
-            typeError(global, "not.a.function", "null");
-            break;
+            throw typeError("not.a.function", "null");
         case "callMethod":
         case "getMethod":
-            typeError(global, "no.such.function", getArgument(linkRequest), "null");
-            break;
+            throw typeError("no.such.function", getArgument(linkRequest), "null");
         case "getProp":
         case "getElem":
-            typeError(global, "cant.get.property", getArgument(linkRequest), "null");
-            break;
+            throw typeError("cant.get.property", getArgument(linkRequest), "null");
         case "setProp":
         case "setElem":
-            typeError(global, "cant.set.property", getArgument(linkRequest), "null");
-            break;
+            throw typeError("cant.set.property", getArgument(linkRequest), "null");
         default:
             break;
         }

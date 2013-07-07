@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,6 +25,7 @@
 
 package jdk.nashorn.internal.tools.nasgen;
 
+import static jdk.internal.org.objectweb.asm.Opcodes.ACC_FINAL;
 import static jdk.internal.org.objectweb.asm.Opcodes.ACC_PRIVATE;
 import static jdk.internal.org.objectweb.asm.Opcodes.ACC_PUBLIC;
 import static jdk.internal.org.objectweb.asm.Opcodes.ACC_STATIC;
@@ -164,13 +165,12 @@ public class ClassGenerator {
         mi.visitCode();
         mi.pushNull();
         mi.putStatic(className, MAP_FIELD_NAME, MAP_DESC);
-        mi.loadClass(className);
         mi.invokeStatic(MAP_TYPE, MAP_NEWMAP, MAP_NEWMAP_DESC);
-        mi.storeLocal(0);
+        // stack: PropertyMap
     }
 
     static void emitStaticInitSuffix(final MethodGenerator mi, final String className) {
-        mi.loadLocal(0);
+        // stack: PropertyMap
         mi.putStatic(className, MAP_FIELD_NAME, MAP_DESC);
         mi.returnVoid();
         mi.computeMaxs();
@@ -236,7 +236,7 @@ public class ClassGenerator {
 
     static void addMapField(final ClassVisitor cv) {
         // add a MAP static field
-        final FieldVisitor fv = cv.visitField(ACC_PRIVATE | ACC_STATIC,
+        final FieldVisitor fv = cv.visitField(ACC_PRIVATE | ACC_STATIC | ACC_FINAL,
             MAP_FIELD_NAME, MAP_DESC, null, null);
         if (fv != null) {
             fv.visitEnd();
@@ -278,7 +278,7 @@ public class ClassGenerator {
 
     static void linkerAddGetterSetter(final MethodGenerator mi, final String className, final MemberInfo memInfo) {
         final String propertyName = memInfo.getName();
-        mi.loadLocal(0);
+        // stack: PropertyMap
         mi.loadLiteral(propertyName);
         // setup flags
         mi.push(memInfo.getAttributes());
@@ -293,12 +293,12 @@ public class ClassGenerator {
             mi.visitLdcInsn(new Handle(H_INVOKEVIRTUAL, className, javaName, setterDesc(memInfo)));
         }
         mi.invokeStatic(LOOKUP_TYPE, LOOKUP_NEWPROPERTY, LOOKUP_NEWPROPERTY_DESC);
-        mi.storeLocal(0);
+        // stack: PropertyMap
     }
 
     static void linkerAddGetterSetter(final MethodGenerator mi, final String className, final MemberInfo getter, final MemberInfo setter) {
         final String propertyName = getter.getName();
-        mi.loadLocal(0);
+        // stack: PropertyMap
         mi.loadLiteral(propertyName);
         // setup flags
         mi.push(getter.getAttributes());
@@ -313,7 +313,7 @@ public class ClassGenerator {
                     setter.getJavaName(), setter.getJavaDesc()));
         }
         mi.invokeStatic(LOOKUP_TYPE, LOOKUP_NEWPROPERTY, LOOKUP_NEWPROPERTY_DESC);
-        mi.storeLocal(0);
+        // stack: PropertyMap
     }
 
     static ScriptClassInfo getScriptClassInfo(final String fileName) throws IOException {

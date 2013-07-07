@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -36,7 +36,7 @@ public class ArrayIterator extends ArrayLikeIterator<Object> {
     protected final ScriptObject array;
 
     /** length of array */
-    protected final int length;
+    protected final long length;
 
     /**
      * Constructor
@@ -46,7 +46,7 @@ public class ArrayIterator extends ArrayLikeIterator<Object> {
     protected ArrayIterator(final ScriptObject array, final boolean includeUndefined) {
         super(includeUndefined);
         this.array = array;
-        this.length = (int) array.getArray().length();
+        this.length = array.getArray().length();
     }
 
     /**
@@ -63,7 +63,7 @@ public class ArrayIterator extends ArrayLikeIterator<Object> {
     }
 
     @Override
-    public int getLength() {
+    public long getLength() {
         return length;
     }
 
@@ -83,6 +83,6 @@ public class ArrayIterator extends ArrayLikeIterator<Object> {
 
     @Override
     public void remove() {
-        array.delete(index, array.getContext()._strict);
+        array.delete(index, false);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -36,6 +36,7 @@ import static jdk.internal.org.objectweb.asm.Opcodes.DUP_X2;
 import static jdk.internal.org.objectweb.asm.Opcodes.IALOAD;
 import static jdk.internal.org.objectweb.asm.Opcodes.IASTORE;
 import static jdk.internal.org.objectweb.asm.Opcodes.INVOKESTATIC;
+import static jdk.internal.org.objectweb.asm.Opcodes.LALOAD;
 import static jdk.internal.org.objectweb.asm.Opcodes.LASTORE;
 import static jdk.internal.org.objectweb.asm.Opcodes.NEWARRAY;
 import static jdk.internal.org.objectweb.asm.Opcodes.POP;
@@ -43,6 +44,7 @@ import static jdk.internal.org.objectweb.asm.Opcodes.POP2;
 import static jdk.internal.org.objectweb.asm.Opcodes.SWAP;
 import static jdk.internal.org.objectweb.asm.Opcodes.T_DOUBLE;
 import static jdk.internal.org.objectweb.asm.Opcodes.T_INT;
+import static jdk.internal.org.objectweb.asm.Opcodes.T_LONG;
 
 import java.lang.invoke.MethodHandle;
 import java.util.Collections;
@@ -106,20 +108,10 @@ public abstract class Type implements Comparable<Type>, BytecodeOps {
     Type(final String name, final Class<?> clazz, final int weight, final int slots) {
         this.name       = name;
         this.clazz      = clazz;
-        this.descriptor = Type.getDescriptor(clazz);
+        this.descriptor = jdk.internal.org.objectweb.asm.Type.getDescriptor(clazz);
         this.weight     = weight;
         assert weight >= MIN_WEIGHT && weight <= MAX_WEIGHT : "illegal type weight: " + weight;
         this.slots      = slots;
-    }
-
-    /**
-     * Return an internal descriptor for a type
-     *
-     * @param type the type
-     * @return descriptor string
-     */
-    public static String getDescriptor(final Class<?> type) {
-        return jdk.internal.org.objectweb.asm.Type.getDescriptor(type);
     }
 
     /**
@@ -616,6 +608,12 @@ public abstract class Type implements Comparable<Type>, BytecodeOps {
         return this;
     }
 
+    @Override
+    public Type loadEmpty(final MethodVisitor method) {
+        assert false : "unsupported operation";
+        return null;
+    }
+
     /**
      * Superclass logic for pop for all types
      *
@@ -647,24 +645,22 @@ public abstract class Type implements Comparable<Type>, BytecodeOps {
     }
 
     private static void swap(final MethodVisitor method, final Type above, final Type below) {
-        final MethodVisitor mv = method;
         if (below.isCategory2()) {
             if (above.isCategory2()) {
-                mv.visitInsn(DUP2_X2);
-                mv.visitInsn(POP2);
+                method.visitInsn(DUP2_X2);
+                method.visitInsn(POP2);
             } else {
-                mv.visitInsn(DUP_X2);
-                mv.visitInsn(POP);
+                method.visitInsn(DUP_X2);
+                method.visitInsn(POP);
             }
         } else {
             if (above.isCategory2()) {
-                mv.visitInsn(DUP2_X1);
-                mv.visitInsn(POP2);
+                method.visitInsn(DUP2_X1);
+                method.visitInsn(POP2);
             } else {
-                mv.visitInsn(SWAP);
+                method.visitInsn(SWAP);
             }
         }
-
     }
 
     /**
@@ -735,19 +731,19 @@ public abstract class Type implements Comparable<Type>, BytecodeOps {
 
         @Override
         public Type aload(final MethodVisitor method) {
-            method.visitInsn(IALOAD);
-            return INT;
+            method.visitInsn(LALOAD);
+            return LONG;
         }
 
         @Override
         public Type newarray(final MethodVisitor method) {
-            method.visitIntInsn(NEWARRAY, T_INT);
+            method.visitIntInsn(NEWARRAY, T_LONG);
             return this;
         }
 
         @Override
         public Type getElementType() {
-            return INT;
+            return LONG;
         }
     };
 
@@ -779,13 +775,13 @@ public abstract class Type implements Comparable<Type>, BytecodeOps {
     };
 
     /** Singleton for method handle arrays used for properties etc. */
-    public static final ArrayType METHODHANDLE_ARRAY = new ArrayType(new MethodHandle[0].getClass());
+    public static final ArrayType METHODHANDLE_ARRAY = new ArrayType(MethodHandle[].class);
 
     /** This is the singleton for string arrays */
-    public static final ArrayType STRING_ARRAY = new ArrayType(new String[0].getClass());
+    public static final ArrayType STRING_ARRAY = new ArrayType(String[].class);
 
     /** This is the singleton for object arrays */
-    public static final ArrayType OBJECT_ARRAY = new ArrayType(new Object[0].getClass());
+    public static final ArrayType OBJECT_ARRAY = new ArrayType(Object[].class);
 
     /** This type, always an object type, just a toString override */
     public static final Type THIS = new ObjectType() {
@@ -837,12 +833,6 @@ public abstract class Type implements Comparable<Type>, BytecodeOps {
 
         @Override
         public Type loadUndefined(final MethodVisitor method) {
-            assert false : "unsupported operation";
-            return null;
-        }
-
-        @Override
-        public Type loadEmpty(final MethodVisitor method) {
             assert false : "unsupported operation";
             return null;
         }

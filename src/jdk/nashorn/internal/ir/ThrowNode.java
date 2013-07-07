@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,49 +25,46 @@
 
 package jdk.nashorn.internal.ir;
 
-import jdk.nashorn.internal.ir.annotations.Ignore;
-import jdk.nashorn.internal.ir.annotations.Reference;
+import jdk.nashorn.internal.ir.annotations.Immutable;
 import jdk.nashorn.internal.ir.visitor.NodeVisitor;
-import jdk.nashorn.internal.runtime.Source;
 
 /**
  * IR representation for THROW statements.
  */
-public class ThrowNode extends Node {
+@Immutable
+public final class ThrowNode extends Statement {
     /** Exception expression. */
-    private Node expression;
+    private final Node expression;
 
-    /** Try chain. */
-    @Reference @Ignore
-    private final TryNode tryChain;
+    private final int flags;
+
+    /** Is this block a synthethic rethrow created by finally inlining? */
+    public static final int IS_SYNTHETIC_RETHROW = 1;
 
     /**
      * Constructor
      *
-     * @param source     the source
+     * @param lineNumber line number
      * @param token      token
      * @param finish     finish
      * @param expression expression to throw
-     * @param tryChain   surrounding try chain
+     * @param flags      flags
      */
-    public ThrowNode(final Source source, final long token, final int finish, final Node expression, final TryNode tryChain) {
-        super(source, token, finish);
-
+    public ThrowNode(final int lineNumber, final long token, final int finish, final Node expression, final int flags) {
+        super(lineNumber, token, finish);
         this.expression = expression;
-        this.tryChain = tryChain;
-        setIsTerminal(true);
+        this.flags = flags;
     }
 
-    private ThrowNode(final ThrowNode throwNode, final CopyState cs) {
-        super(throwNode);
-
-        expression = cs.existingOrCopy(throwNode.expression);
-        tryChain = (TryNode)cs.existingOrSame(throwNode.tryChain);
+    private ThrowNode(final ThrowNode node, final Node expression, final int flags) {
+        super(node);
+        this.expression = expression;
+        this.flags = flags;
     }
 
     @Override
-    protected Node copy(final CopyState cs) {
-        return new ThrowNode(this, cs);
+    public boolean isTerminal() {
+        return true;
     }
 
     /**
@@ -75,10 +72,9 @@ public class ThrowNode extends Node {
      * @param visitor IR navigating visitor.
      */
     @Override
-    public Node accept(final NodeVisitor visitor) {
-        if (visitor.enter(this) != null) {
-            setExpression(expression.accept(visitor));
-            return visitor.leave(this);
+    public Node accept(final NodeVisitor<? extends LexicalContext> visitor) {
+        if (visitor.enterThrowNode(this)) {
+            return visitor.leaveThrowNode(setExpression(expression.accept(visitor)));
         }
 
         return this;
@@ -104,16 +100,23 @@ public class ThrowNode extends Node {
     /**
      * Reset the expression being thrown by this node
      * @param expression new expression
+     * @return new or same thrownode
      */
-    public void setExpression(final Node expression) {
-        this.expression = expression;
+    public ThrowNode setExpression(final Node expression) {
+        if (this.expression == expression) {
+            return this;
+        }
+        return new ThrowNode(this, expression, flags);
     }
 
     /**
-     * Get surrounding tryChain for this node
-     * @return try chain
+     * Is this a throw a synthetic rethrow in a synthetic catch-all block
+     * created when inlining finally statements? In that case we never
+     * wrap whatever is thrown into an ECMAException, just rethrow it.
+     * @return true if synthetic throw node
      */
-    public TryNode getTryChain() {
-        return tryChain;
+    public boolean isSyntheticRethrow() {
+        return (flags & IS_SYNTHETIC_RETHROW) == IS_SYNTHETIC_RETHROW;
     }
+
 }

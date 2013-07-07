@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -39,7 +39,7 @@ public final class ReverseArrayIterator extends ArrayIterator {
      */
     public ReverseArrayIterator(final ScriptObject array, final boolean includeUndefined) {
         super(array, includeUndefined);
-        this.index = (int) (array.getArray().length() - 1);
+        this.index = array.getArray().length() - 1;
     }
 
     @Override
@@ -53,7 +53,7 @@ public final class ReverseArrayIterator extends ArrayIterator {
     }
 
     @Override
-    protected int bumpIndex() {
+    protected long bumpIndex() {
         return index--;
     }
 }

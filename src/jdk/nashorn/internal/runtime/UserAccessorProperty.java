@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,15 @@
 package jdk.nashorn.internal.runtime;
 
 import java.lang.invoke.MethodHandle;
-import jdk.nashorn.internal.runtime.linker.Lookup;
+import java.lang.invoke.MethodHandles;
+
+import jdk.nashorn.internal.codegen.CompilerConstants;
+import jdk.nashorn.internal.lookup.Lookup;
+import jdk.nashorn.internal.runtime.linker.Bootstrap;
+
+import static jdk.nashorn.internal.codegen.CompilerConstants.staticCall;
+import static jdk.nashorn.internal.runtime.ECMAErrors.typeError;
+import static jdk.nashorn.internal.runtime.ScriptRuntime.UNDEFINED;
 
 /**
  * Property with user defined getters/setters. Actual getter and setter
@@ -51,6 +59,22 @@ public final class UserAccessorProperty extends Property {
     /** User defined setter function slot. */
     private final int setterSlot;
 
+    /** Getter method handle */
+    private final static CompilerConstants.Call USER_ACCESSOR_GETTER = staticCall(MethodHandles.lookup(), UserAccessorProperty.class,
+            "userAccessorGetter", Object.class, ScriptObject.class, int.class, Object.class);
+
+    /** Setter method handle */
+    private final static CompilerConstants.Call USER_ACCESSOR_SETTER = staticCall(MethodHandles.lookup(), UserAccessorProperty.class,
+            "userAccessorSetter", void.class, ScriptObject.class, int.class, String.class, Object.class, Object.class);
+
+    /** Dynamic invoker for getter */
+    private static final MethodHandle INVOKE_UA_GETTER = Bootstrap.createDynamicInvoker("dyn:call", Object.class,
+            Object.class, Object.class);
+
+    /** Dynamic invoker for setter */
+    private static final MethodHandle INVOKE_UA_SETTER = Bootstrap.createDynamicInvoker("dyn:call", void.class,
+            Object.class, Object.class, Object.class);
+
     /**
      * Constructor
      *
@@ -60,32 +84,31 @@ public final class UserAccessorProperty extends Property {
      * @param setterSlot setter slot, starting at first embed
      */
     public UserAccessorProperty(final String key, final int flags, final int getterSlot, final int setterSlot) {
-        super(key, flags);
+        super(key, flags, -1);
         this.getterSlot = getterSlot;
         this.setterSlot = setterSlot;
     }
 
     private UserAccessorProperty(final UserAccessorProperty property) {
         super(property);
-
         this.getterSlot = property.getterSlot;
         this.setterSlot = property.setterSlot;
     }
 
     /**
-     * Return getter slot for this UserAccessorProperty. Slots start with first embed field.
+     * Return getter spill slot for this UserAccessorProperty.
      * @return getter slot
      */
     public int getGetterSlot() {
-        return getterSlot < 0 ? -getterSlot - 1 : getterSlot;
+        return getterSlot;
     }
 
     /**
-     * Return setter slot for this UserAccessorProperty. Slots start with first embed field.
+     * Return setter spill slot for this UserAccessorProperty.
      * @return setter slot
      */
     public int getSetterSlot() {
-        return setterSlot < 0 ? -setterSlot - 1 : setterSlot;
+        return setterSlot;
     }
 
     @Override
@@ -95,16 +118,12 @@ public final class UserAccessorProperty extends Property {
 
     @Override
     public boolean equals(final Object other) {
-        if (this == other) {
-            return true;
+        if (!super.equals(other)) {
+            return false;
         }
 
-        if (other instanceof UserAccessorProperty) {
-            final UserAccessorProperty uc = (UserAccessorProperty) other;
-            return super.equals(other) && getterSlot == uc.getterSlot && setterSlot == uc.setterSlot;
-        }
-
-        return false;
+        final UserAccessorProperty uc = (UserAccessorProperty) other;
+        return getterSlot == uc.getterSlot && setterSlot == uc.setterSlot;
     }
 
     @Override
@@ -117,47 +136,87 @@ public final class UserAccessorProperty extends Property {
      */
     @Override
     public int getSpillCount() {
-        // calculate how many spill array slots used by this propery.
-        int count = 0;
-        if (getGetterSlot() >= ScriptObject.EMBED_SIZE) {
-            count++;
-        }
-        if (getSetterSlot() >= ScriptObject.EMBED_SIZE) {
-            count++;
-        }
-        return count;
+        return 2;
     }
 
     @Override
-    public boolean hasGetterFunction() {
-        return getterSlot > -1;
+    public boolean hasGetterFunction(final ScriptObject obj) {
+        return obj.getSpill(getterSlot) != null;
     }
 
     @Override
-    public boolean hasSetterFunction() {
-        return setterSlot > -1;
+    public boolean hasSetterFunction(final ScriptObject obj) {
+        return obj.getSpill(setterSlot) != null;
+    }
+
+    @Override
+    public Object getObjectValue(final ScriptObject self, final ScriptObject owner) {
+        return userAccessorGetter(owner, getGetterSlot(), self);
+    }
+
+    @Override
+    public void setObjectValue(final ScriptObject self, final ScriptObject owner, final Object value, final boolean strict) {
+        userAccessorSetter(owner, getSetterSlot(), strict ? getKey() : null, self, value);
     }
 
     @Override
     public MethodHandle getGetter(final Class<?> type) {
-        return Lookup.filterReturnType(ScriptObject.USER_ACCESSOR_GETTER.methodHandle(), type);
+        return Lookup.filterReturnType(USER_ACCESSOR_GETTER.methodHandle(), type);
     }
 
     @Override
     public ScriptFunction getGetterFunction(final ScriptObject obj) {
-        final Object value = obj.getEmbedOrSpill(getterSlot);
+        final Object value = obj.getSpill(getterSlot);
         return (value instanceof ScriptFunction) ? (ScriptFunction) value : null;
     }
 
     @Override
     public MethodHandle getSetter(final Class<?> type, final PropertyMap currentMap) {
-        return ScriptObject.USER_ACCESSOR_SETTER.methodHandle();
+        return USER_ACCESSOR_SETTER.methodHandle();
     }
 
     @Override
     public ScriptFunction getSetterFunction(final ScriptObject obj) {
-        final Object value = obj.getEmbedOrSpill(setterSlot);
+        final Object value = obj.getSpill(setterSlot);
         return (value instanceof ScriptFunction) ? (ScriptFunction) value : null;
-
     }
+
+    // User defined getter and setter are always called by "dyn:call". Note that the user
+    // getter/setter may be inherited. If so, proto is bound during lookup. In either
+    // inherited or self case, slot is also bound during lookup. Actual ScriptFunction
+    // to be called is retrieved everytime and applied.
+    static Object userAccessorGetter(final ScriptObject proto, final int slot, final Object self) {
+        final ScriptObject container = (proto != null) ? proto : (ScriptObject)self;
+        final Object       func      = container.getSpill(slot);
+
+        if (func instanceof ScriptFunction) {
+            try {
+                return INVOKE_UA_GETTER.invokeExact(func, self);
+            } catch(final Error|RuntimeException t) {
+                throw t;
+            } catch(final Throwable t) {
+                throw new RuntimeException(t);
+            }
+        }
+
+        return UNDEFINED;
+    }
+
+    static void userAccessorSetter(final ScriptObject proto, final int slot, final String name, final Object self, final Object value) {
+        final ScriptObject container = (proto != null) ? proto : (ScriptObject)self;
+        final Object       func      = container.getSpill(slot);
+
+        if (func instanceof ScriptFunction) {
+            try {
+                INVOKE_UA_SETTER.invokeExact(func, self, value);
+            } catch(final Error|RuntimeException t) {
+                throw t;
+            } catch(final Throwable t) {
+                throw new RuntimeException(t);
+            }
+        }  else if (name != null) {
+            throw typeError("property.has.no.setter", name, ScriptRuntime.safeToString(self));
+        }
+    }
+
 }

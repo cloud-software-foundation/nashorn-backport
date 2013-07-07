@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -136,7 +136,18 @@ public final class NashornScriptEngineFactory implements ScriptEngineFactory {
 
     @Override
     public ScriptEngine getScriptEngine() {
-        return new NashornScriptEngine(this);
+        return new NashornScriptEngine(this, getAppClassLoader());
+    }
+
+    /**
+     * Create a new Script engine initialized by given class loader.
+     *
+     * @param appLoader class loader to be used as script "app" class loader.
+     * @return newly created script engine.
+     */
+    public ScriptEngine getScriptEngine(final ClassLoader appLoader) {
+        checkConfigPermission();
+        return new NashornScriptEngine(this, appLoader);
     }
 
     /**
@@ -146,10 +157,30 @@ public final class NashornScriptEngineFactory implements ScriptEngineFactory {
      * @return newly created script engine.
      */
     public ScriptEngine getScriptEngine(final String[] args) {
-        return new NashornScriptEngine(this, args);
+        checkConfigPermission();
+        return new NashornScriptEngine(this, args, getAppClassLoader());
+    }
+
+    /**
+     * Create a new Script engine initialized by given arguments.
+     *
+     * @param args arguments array passed to script engine.
+     * @param appLoader class loader to be used as script "app" class loader.
+     * @return newly created script engine.
+     */
+    public ScriptEngine getScriptEngine(final String[] args, final ClassLoader appLoader) {
+        checkConfigPermission();
+        return new NashornScriptEngine(this, args, appLoader);
     }
 
     // -- Internals only below this point
+
+    private static void checkConfigPermission() {
+        final SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            sm.checkPermission(new RuntimePermission("nashorn.setConfig"));
+        }
+    }
 
     private static final List<String> names;
     private static final List<String> mimeTypes;
@@ -175,5 +206,13 @@ public final class NashornScriptEngineFactory implements ScriptEngineFactory {
 
     private static List<String> immutableList(final String... elements) {
         return Collections.unmodifiableList(Arrays.asList(elements));
+    }
+
+    private static ClassLoader getAppClassLoader() {
+        // Revisit: script engine implementation needs the capability to
+        // find the class loader of the context in which the script engine
+        // is running so that classes will be found and loaded properly
+        ClassLoader ccl = Thread.currentThread().getContextClassLoader();
+        return (ccl == null)? NashornScriptEngineFactory.class.getClassLoader() : ccl;
     }
 }

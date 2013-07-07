@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,20 +26,22 @@
 package jdk.nashorn.internal.objects;
 
 import static jdk.nashorn.internal.runtime.ECMAErrors.typeError;
-import static jdk.nashorn.internal.runtime.linker.Lookup.MH;
+import static jdk.nashorn.internal.lookup.Lookup.MH;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
+import jdk.internal.dynalink.linker.GuardedInvocation;
+import jdk.internal.dynalink.linker.LinkRequest;
 import jdk.nashorn.internal.objects.annotations.Attribute;
 import jdk.nashorn.internal.objects.annotations.Constructor;
 import jdk.nashorn.internal.objects.annotations.Function;
 import jdk.nashorn.internal.objects.annotations.ScriptClass;
 import jdk.nashorn.internal.runtime.JSType;
+import jdk.nashorn.internal.runtime.PropertyMap;
 import jdk.nashorn.internal.runtime.ScriptObject;
 import jdk.nashorn.internal.runtime.ScriptRuntime;
-import jdk.nashorn.internal.runtime.linker.NashornCallSiteDescriptor;
+import jdk.nashorn.internal.lookup.MethodHandleFactory;
 import jdk.nashorn.internal.runtime.linker.PrimitiveLookup;
-import org.dynalang.dynalink.linker.GuardedInvocation;
 
 /**
  * ECMA 15.6 Boolean Objects.
@@ -49,15 +51,26 @@ import org.dynalang.dynalink.linker.GuardedInvocation;
 public final class NativeBoolean extends ScriptObject {
     private final boolean value;
 
-    private final static MethodHandle WRAPFILTER = findWrapFilter();
+    final static MethodHandle WRAPFILTER = findWrapFilter();
 
-    NativeBoolean(final boolean value) {
-        this(value, Global.instance().getBooleanPrototype());
+    // initialized by nasgen
+    private static PropertyMap $nasgenmap$;
+
+    static PropertyMap getInitialMap() {
+        return $nasgenmap$;
     }
 
-    private NativeBoolean(final boolean value, final ScriptObject proto) {
+    private NativeBoolean(final boolean value, final ScriptObject proto, final PropertyMap map) {
+        super(proto, map);
         this.value = value;
-        this.setProto(proto);
+    }
+
+    NativeBoolean(final boolean flag, final Global global) {
+        this(flag, global.getBooleanPrototype(), global.getBooleanMap());
+    }
+
+    NativeBoolean(final boolean flag) {
+        this(flag, Global.instance());
     }
 
     @Override
@@ -126,11 +139,7 @@ public final class NativeBoolean extends ScriptObject {
         final boolean flag = JSType.toBoolean(value);
 
         if (newObj) {
-            final ScriptObject proto = (self instanceof ScriptObject) ?
-                ((ScriptObject)self).getProto() :
-                Global.instance().getBooleanPrototype();
-
-            return new NativeBoolean(flag, proto);
+            return new NativeBoolean(flag);
         }
 
         return flag;
@@ -144,20 +153,19 @@ public final class NativeBoolean extends ScriptObject {
         } else if (self != null && self == Global.instance().getBooleanPrototype()) {
             return false;
         } else {
-            typeError(Global.instance(), "not.a.boolean", ScriptRuntime.safeToString(self));
-            return false;
+            throw typeError("not.a.boolean", ScriptRuntime.safeToString(self));
         }
     }
 
     /**
      * Lookup the appropriate method for an invoke dynamic call.
      *
-     * @param desc     The invoke dynamic callsite descriptor.
+     * @param request  The link request
      * @param receiver The receiver for the call
      * @return Link to be invoked at call site.
      */
-    public static GuardedInvocation lookupPrimitive(final NashornCallSiteDescriptor desc, final Object receiver) {
-        return PrimitiveLookup.lookupPrimitive(desc, Boolean.class, new NativeBoolean((Boolean)receiver), WRAPFILTER);
+    public static GuardedInvocation lookupPrimitive(final LinkRequest request, final Object receiver) {
+        return PrimitiveLookup.lookupPrimitive(request, Boolean.class, new NativeBoolean((Boolean)receiver), WRAPFILTER);
     }
 
     /**
@@ -172,10 +180,6 @@ public final class NativeBoolean extends ScriptObject {
     }
 
     private static MethodHandle findWrapFilter() {
-        try {
-            return MethodHandles.lookup().findStatic(NativeBoolean.class, "wrapFilter", MH.type(NativeBoolean.class, Object.class));
-        } catch (NoSuchMethodException | IllegalAccessException e) {
-            throw new AssertionError(e);
-        }
+        return MH.findStatic(MethodHandles.lookup(), NativeBoolean.class, "wrapFilter", MH.type(NativeBoolean.class, Object.class));
     }
 }

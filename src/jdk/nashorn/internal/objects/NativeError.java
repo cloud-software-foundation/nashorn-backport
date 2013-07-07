@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,12 +26,12 @@
 package jdk.nashorn.internal.objects;
 
 import static jdk.nashorn.internal.runtime.ScriptRuntime.UNDEFINED;
-import static jdk.nashorn.internal.runtime.linker.Lookup.MH;
+import static jdk.nashorn.internal.lookup.Lookup.MH;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
-import java.util.ArrayList;
-import java.util.List;
+import jdk.nashorn.api.scripting.NashornException;
+import jdk.nashorn.internal.lookup.MethodHandleFactory;
 import jdk.nashorn.internal.objects.annotations.Attribute;
 import jdk.nashorn.internal.objects.annotations.Constructor;
 import jdk.nashorn.internal.objects.annotations.Function;
@@ -40,6 +40,7 @@ import jdk.nashorn.internal.objects.annotations.ScriptClass;
 import jdk.nashorn.internal.objects.annotations.Where;
 import jdk.nashorn.internal.runtime.ECMAException;
 import jdk.nashorn.internal.runtime.JSType;
+import jdk.nashorn.internal.runtime.PropertyMap;
 import jdk.nashorn.internal.runtime.ScriptObject;
 import jdk.nashorn.internal.runtime.ScriptRuntime;
 
@@ -47,7 +48,7 @@ import jdk.nashorn.internal.runtime.ScriptRuntime;
  * ECMA 15.11 Error Objects
  */
 @ScriptClass("Error")
-public class NativeError extends ScriptObject {
+public final class NativeError extends ScriptObject {
 
     static final MethodHandle GET_COLUMNNUMBER = findOwnMH("getColumnNumber", Object.class, Object.class);
     static final MethodHandle SET_COLUMNNUMBER = findOwnMH("setColumnNumber", Object.class, Object.class, Object.class);
@@ -83,13 +84,28 @@ public class NativeError extends ScriptObject {
     @Property(attributes = Attribute.NOT_ENUMERABLE, where = Where.PROTOTYPE)
     public Object message;
 
-    NativeError(final Object msg) {
-        this.setProto(Global.instance().getErrorPrototype());
+    // initialized by nasgen
+    private static PropertyMap $nasgenmap$;
+
+    static PropertyMap getInitialMap() {
+        return $nasgenmap$;
+    }
+
+    private NativeError(final Object msg, final ScriptObject proto, final PropertyMap map) {
+        super(proto, map);
         if (msg != UNDEFINED) {
             this.instMessage = JSType.toString(msg);
         } else {
-            this.delete(NativeError.MESSAGE, Global.isStrict());
+            this.delete(NativeError.MESSAGE, false);
         }
+    }
+
+    NativeError(final Object msg, final Global global) {
+        this(msg, global.getErrorPrototype(), global.getErrorMap());
+    }
+
+    private NativeError(final Object msg) {
+        this(msg, Global.instance());
     }
 
     @Override
@@ -109,6 +125,22 @@ public class NativeError extends ScriptObject {
     @Constructor
     public static Object constructor(final boolean newObj, final Object self, final Object msg) {
         return new NativeError(msg);
+    }
+
+    /**
+     * Nashorn extension: Error.captureStackTrace. Capture stack trace at the point of call into the Error object provided.
+     *
+     * @param self self reference
+     * @param errorObj the error object
+     * @return undefined
+     */
+    @Function(attributes = Attribute.NOT_ENUMERABLE, where = Where.CONSTRUCTOR)
+    public static Object captureStackTrace(final Object self, final Object errorObj) {
+        Global.checkObject(errorObj);
+        final ScriptObject sobj = (ScriptObject)errorObj;
+        final ECMAException exp = new ECMAException(sobj, null);
+        sobj.set("stack", getScriptStackString(sobj, exp), false);
+        return UNDEFINED;
     }
 
     /**
@@ -141,6 +173,30 @@ public class NativeError extends ScriptObject {
     }
 
     /**
+     * Nashorn extension: Error.prototype.getStackTrace()
+     * "stack" property is an array typed value containing {@link StackTraceElement}
+     * objects of JavaScript stack frames.
+     *
+     * @param self  self reference
+     *
+     * @return      stack trace as a script array.
+     */
+    @Function(attributes = Attribute.NOT_ENUMERABLE)
+    public static Object getStackTrace(final Object self) {
+        Global.checkObject(self);
+        final ScriptObject sobj = (ScriptObject)self;
+        final Object exception = ECMAException.getException(sobj);
+        Object[] res;
+        if (exception instanceof Throwable) {
+            res = NashornException.getScriptFrames((Throwable)exception);
+        } else {
+            res = ScriptRuntime.EMPTY_ARRAY;
+        }
+
+        return new NativeArray(res);
+    }
+
+    /**
      * Nashorn extension: Error.prototype.lineNumber
      *
      * @param self self reference
@@ -164,7 +220,7 @@ public class NativeError extends ScriptObject {
     public static Object setLineNumber(final Object self, final Object value) {
         Global.checkObject(self);
         final ScriptObject sobj = (ScriptObject)self;
-        sobj.set(LINENUMBER, value, Global.isStrict());
+        sobj.set(LINENUMBER, value, false);
         return value;
     }
 
@@ -192,7 +248,7 @@ public class NativeError extends ScriptObject {
     public static Object setColumnNumber(final Object self, final Object value) {
         Global.checkObject(self);
         final ScriptObject sobj = (ScriptObject)self;
-        sobj.set(COLUMNNUMBER, value, Global.isStrict());
+        sobj.set(COLUMNNUMBER, value, false);
         return value;
     }
 
@@ -220,14 +276,14 @@ public class NativeError extends ScriptObject {
     public static Object setFileName(final Object self, final Object value) {
         Global.checkObject(self);
         final ScriptObject sobj = (ScriptObject)self;
-        sobj.set(FILENAME, value, Global.isStrict());
+        sobj.set(FILENAME, value, false);
         return value;
     }
 
     /**
      * Nashorn extension: Error.prototype.stack
-     * "stack" property is an array typed value containing {@link StackTraceElement}
-     * objects of JavaScript stack frames.
+     * "stack" property is a string typed value containing JavaScript stack frames.
+     * Each frame information is separated bv "\n" character.
      *
      * @param self  self reference
      *
@@ -241,21 +297,11 @@ public class NativeError extends ScriptObject {
         }
 
         final Object exception = ECMAException.getException(sobj);
-        Object[] res;
         if (exception instanceof Throwable) {
-            final StackTraceElement[] frames = ((Throwable)exception).getStackTrace();
-            final List<StackTraceElement> filtered = new ArrayList<>();
-            for (final StackTraceElement st : frames) {
-                if (ECMAException.isScriptFrame(st)) {
-                    filtered.add(st);
-                }
-            }
-            res = filtered.toArray();
-        } else {
-            res = ScriptRuntime.EMPTY_ARRAY;
+            return getScriptStackString(sobj, (Throwable)exception);
         }
 
-        return new NativeArray(res);
+        return "";
     }
 
     /**
@@ -270,7 +316,7 @@ public class NativeError extends ScriptObject {
     public static Object setStack(final Object self, final Object value) {
         Global.checkObject(self);
         final ScriptObject sobj = (ScriptObject)self;
-        sobj.set(STACK, value, Global.isStrict());
+        sobj.set(STACK, value, false);
         return value;
     }
 
@@ -316,10 +362,14 @@ public class NativeError extends ScriptObject {
             return name;
         }
         // Step 10 : return name + ": " + msg
-        return (String)name + ": " + (String)msg;
+        return name + ": " + msg;
     }
 
     private static MethodHandle findOwnMH(final String name, final Class<?> rtype, final Class<?>... types) {
         return MH.findStatic(MethodHandles.lookup(), NativeError.class, name, MH.type(rtype, types));
+    }
+
+    private static String getScriptStackString(final ScriptObject sobj, final Throwable exp) {
+        return JSType.toString(sobj) + "\n" + NashornException.getScriptStackString(exp);
     }
 }

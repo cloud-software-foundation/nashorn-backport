@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -36,10 +36,15 @@ import java.lang.invoke.MethodHandle;
 import java.lang.reflect.Array;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.Locale;
+import java.util.NoSuchElementException;
 import java.util.Objects;
+import jdk.internal.dynalink.beans.StaticClass;
+import jdk.nashorn.api.scripting.ScriptObjectMirror;
 import jdk.nashorn.internal.codegen.CompilerConstants.Call;
+import jdk.nashorn.internal.ir.debug.JSONWriter;
+import jdk.nashorn.internal.parser.Lexer;
 import jdk.nashorn.internal.runtime.linker.Bootstrap;
-import org.dynalang.dynalink.beans.StaticClass;
 
 
 /**
@@ -68,27 +73,25 @@ public final class ScriptRuntime {
     /** Method handle to generic === operator, operating on objects */
     public static final Call EQ_STRICT = staticCallNoLookup(ScriptRuntime.class, "EQ_STRICT", boolean.class, Object.class, Object.class);
 
-    /** Method handle used to enter a {@code with} scope at runtime. Used from {@link jdk.nashorn.internal.codegen.CodeGenerator} */
+    /** Method handle used to enter a {@code with} scope at runtime. */
     public static final Call OPEN_WITH = staticCallNoLookup(ScriptRuntime.class, "openWith", ScriptObject.class, ScriptObject.class, Object.class);
 
-    /** Method handle used to exit a {@code with} scope at runtime. Used from {@link jdk.nashorn.internal.codegen.CodeGenerator} */
+    /** Method handle used to exit a {@code with} scope at runtime. */
     public static final Call CLOSE_WITH = staticCallNoLookup(ScriptRuntime.class, "closeWith", ScriptObject.class, ScriptObject.class);
 
     /**
      * Method used to place a scope's variable into the Global scope, which has to be done for the
-     * properties declared at outermost script level. Used from {@link jdk.nashorn.internal.codegen.CodeGenerator}
+     * properties declared at outermost script level.
      */
     public static final Call MERGE_SCOPE = staticCallNoLookup(ScriptRuntime.class, "mergeScope", ScriptObject.class, ScriptObject.class);
 
     /**
      * Return an appropriate iterator for the elements in a for-in construct
-     * Used from {@link jdk.nashorn.internal.codegen.CodeGenerator}
      */
     public static final Call TO_PROPERTY_ITERATOR = staticCallNoLookup(ScriptRuntime.class, "toPropertyIterator", Iterator.class, Object.class);
 
     /**
      * Return an appropriate iterator for the elements in a for-each construct
-     * Used from {@link jdk.nashorn.internal.codegen.CodeGenerator}
      */
     public static final Call TO_VALUE_ITERATOR = staticCallNoLookup(ScriptRuntime.class, "toValueIterator", Iterator.class, Object.class);
 
@@ -114,6 +117,17 @@ public final class ScriptRuntime {
             }
         }
 
+        return deflt;
+    }
+
+    /**
+     * Converts a switch tag value to a simple integer. deflt value if it can't.
+     *
+     * @param tag   Switch statement tag value.
+     * @param deflt default to use if not convertible.
+     * @return int tag value (or deflt.)
+     */
+    public static int switchTagAsInt(final boolean tag, final int deflt) {
         return deflt;
     }
 
@@ -238,6 +252,10 @@ public final class ScriptRuntime {
             };
         }
 
+        if (obj instanceof ScriptObjectMirror) {
+            return ((ScriptObjectMirror)obj).keySet().iterator();
+        }
+
         return Collections.emptyIterator();
     }
 
@@ -265,6 +283,9 @@ public final class ScriptRuntime {
 
                 @Override
                 public Object next() {
+                    if (index >= length) {
+                        throw new NoSuchElementException();
+                    }
                     return Array.get(array, index++);
                 }
 
@@ -273,6 +294,10 @@ public final class ScriptRuntime {
                     throw new UnsupportedOperationException();
                 }
             };
+        }
+
+        if (obj instanceof ScriptObjectMirror) {
+            return ((ScriptObjectMirror)obj).values().iterator();
         }
 
         if (obj instanceof Iterable) {
@@ -296,6 +321,37 @@ public final class ScriptRuntime {
     }
 
     /**
+     * Check that the target function is associated with current Context. And also make sure that 'self', if
+     * ScriptObject, is from current context.
+     *
+     * Call a function given self and args. If the number of the arguments is known in advance, you can likely achieve
+     * better performance by {@link Bootstrap#createDynamicInvoker(String, Class, Class...) creating a dynamic invoker}
+     * for operation {@code "dyn:call"}, then using its {@link MethodHandle#invokeExact(Object...)} method instead.
+     *
+     * @param target ScriptFunction object.
+     * @param self   Receiver in call.
+     * @param args   Call arguments.
+     * @return Call result.
+     */
+    public static Object checkAndApply(final ScriptFunction target, final Object self, final Object... args) {
+        final ScriptObject global = Context.getGlobalTrusted();
+        if (! (global instanceof GlobalObject)) {
+            throw new IllegalStateException("No current global set");
+        }
+
+        if (target.getContext() != global.getContext()) {
+            throw new IllegalArgumentException("'target' function is not from current Context");
+        }
+
+        if (self instanceof ScriptObject && ((ScriptObject)self).getContext() != global.getContext()) {
+            throw new IllegalArgumentException("'self' object is not from current Context");
+        }
+
+        // all in order - call real 'apply'
+        return apply(target, self, args);
+    }
+
+    /**
      * Call a function given self and args. If the number of the arguments is known in advance, you can likely achieve
      * better performance by {@link Bootstrap#createDynamicInvoker(String, Class, Class...) creating a dynamic invoker}
      * for operation {@code "dyn:call"}, then using its {@link MethodHandle#invokeExact(Object...)} method instead.
@@ -316,16 +372,39 @@ public final class ScriptRuntime {
     }
 
     /**
-     * Constructor new object using given constructor function
+     * Check that the target function is associated with current Context.
+     * And also make sure that 'self', if ScriptObject, is from current context.
+     *
+     * Call a function as a constructor given args.
+     *
      * @param target ScriptFunction object.
-     * @param args   Constructor arguments.
-     * @return newly constructed object.
+     * @param args   Call arguments.
+     * @return Constructor call result.
+     */
+    public static Object checkAndConstruct(final ScriptFunction target, final Object... args) {
+        final ScriptObject global = Context.getGlobalTrusted();
+        if (! (global instanceof GlobalObject)) {
+            throw new IllegalStateException("No current global set");
+        }
+
+        if (target.getContext() != global.getContext()) {
+            throw new IllegalArgumentException("'target' function is not from current Context");
+        }
+
+        // all in order - call real 'construct'
+        return construct(target, args);
+    }
+
+    /*
+     * Call a script function as a constructor with given args.
+     *
+     * @param target ScriptFunction object.
+     * @param args   Call arguments.
+     * @return Constructor call result.
      */
     public static Object construct(final ScriptFunction target, final Object... args) {
         try {
-            final ScriptObject allocation = (ScriptObject)target.allocate();
-            final Object result = target.construct(allocation, args);
-            return result instanceof ScriptObject ? result : allocation;
+            return target.construct(args);
         } catch (final RuntimeException | Error e) {
             throw e;
         } catch (final Throwable t) {
@@ -377,6 +456,28 @@ public final class ScriptRuntime {
     }
 
     /**
+     * Returns AST as JSON compatible string. This is used to
+     * implement "parse" function in resources/parse.js script.
+     *
+     * @param code code to be parsed
+     * @param name name of the code source (used for location)
+     * @param includeLoc tells whether to include location information for nodes or not
+     * @return JSON string representation of AST of the supplied code
+     */
+    public static String parse(final String code, final String name, final boolean includeLoc) {
+        return JSONWriter.parse(Context.getContextTrusted().getEnv(), code, name, includeLoc);
+    }
+
+    /**
+     * Test whether a char is valid JavaScript whitespace
+     * @param ch a char
+     * @return true if valid JavaScript whitespace
+     */
+    public static boolean isJSWhitespace(final char ch) {
+        return Lexer.isJSWhitespace(ch);
+    }
+
+    /**
      * Entering a {@code with} node requires new scope. This is the implementation
      *
      * @param scope      existing scope
@@ -385,14 +486,14 @@ public final class ScriptRuntime {
      * @return {@link WithObject} that is the new scope
      */
     public static ScriptObject openWith(final ScriptObject scope, final Object expression) {
-        final ScriptObject global = Context.getGlobal();
+        final ScriptObject global = Context.getGlobalTrusted();
         if (expression == UNDEFINED) {
-            typeError(global, "cant.apply.with.to.undefined");
+            throw typeError(global, "cant.apply.with.to.undefined");
         } else if (expression == null) {
-            typeError(global, "cant.apply.with.to.null");
+            throw typeError(global, "cant.apply.with.to.null");
         }
 
-        final ScriptObject withObject = new WithObject(scope, JSType.toObject(global, expression));
+        final ScriptObject withObject = new WithObject(scope, JSType.toScriptObject(global, expression));
 
         return withObject;
     }
@@ -488,32 +589,17 @@ public final class ScriptRuntime {
             } else if (object instanceof Undefined) {
                 obj = ((Undefined)obj).get(property);
             } else if (object == null) {
-                typeError(Context.getGlobal(), "cant.get.property", safeToString(property), "null");
+                throw typeError("cant.get.property", safeToString(property), "null");
             } else if (JSType.isPrimitive(obj)) {
-                obj = ((ScriptObject)JSType.toObject(Context.getGlobal(), obj)).get(property);
+                obj = ((ScriptObject)JSType.toScriptObject(obj)).get(property);
+            } else if (obj instanceof ScriptObjectMirror) {
+                obj = ((ScriptObjectMirror)obj).getMember(property.toString());
             } else {
                 obj = UNDEFINED;
             }
         }
 
         return JSType.of(obj).typeName();
-    }
-
-    /**
-     * ECMA 11.4.2 - void operator
-     *
-     * @param object object to evaluate
-     *
-     * @return Undefined as the object type
-     */
-    public static Object VOID(final Object object) {
-        if (object instanceof Number) {
-            if (Double.isNaN(((Number)object).doubleValue())) {
-                return Double.NaN;
-            }
-        }
-
-        return UNDEFINED;
     }
 
     /**
@@ -526,8 +612,7 @@ public final class ScriptRuntime {
      * @return undefined
      */
     public static Object REFERENCE_ERROR(final Object lhs, final Object rhs, final Object msg) {
-        referenceError(Context.getGlobal(), "cant.be.used.as.lhs", Objects.toString(msg));
-        return UNDEFINED;
+        throw referenceError("cant.be.used.as.lhs", Objects.toString(msg));
     }
 
     /**
@@ -549,11 +634,15 @@ public final class ScriptRuntime {
         }
 
         if (obj == null) {
-            typeError(Context.getGlobal(), "cant.delete.property", safeToString(property), "null");
+            throw typeError("cant.delete.property", safeToString(property), "null");
+        }
+
+        if (obj instanceof ScriptObjectMirror) {
+            return ((ScriptObjectMirror)obj).delete(property);
         }
 
         if (JSType.isPrimitive(obj)) {
-            return ((ScriptObject) JSType.toObject(Context.getGlobal(), obj)).delete(property, Boolean.TRUE.equals(strict));
+            return ((ScriptObject) JSType.toScriptObject(obj)).delete(property, Boolean.TRUE.equals(strict));
         }
 
         // if object is not reference type, vacuously delete is successful.
@@ -566,15 +655,14 @@ public final class ScriptRuntime {
      * This is 'delete' that always fails. We have to check strict mode and throw error.
      * That is why this is a runtime function. Or else we could have inlined 'false'.
      *
-     * @param obj       object with property to delete
      * @param property  property to delete
      * @param strict    are we in strict mode
      *
      * @return false always
      */
-    public static boolean FAIL_DELETE(final Object obj, final Object property, final Object strict) {
+    public static boolean FAIL_DELETE(final Object property, final Object strict) {
         if (Boolean.TRUE.equals(strict)) {
-            syntaxError(Context.getGlobal(), "strict.cant.delete", safeToString(property));
+            throw syntaxError("strict.cant.delete", safeToString(property));
         }
         return false;
     }
@@ -751,9 +839,7 @@ public final class ScriptRuntime {
             return false;
         }
 
-        typeError(Context.getGlobal(), "in.with.non.object", rvalType.toString().toLowerCase());
-
-        return false;
+        throw typeError("in.with.non.object", rvalType.toString().toLowerCase(Locale.ENGLISH));
     }
 
     /**
@@ -776,13 +862,18 @@ public final class ScriptRuntime {
             return ((StaticClass)clazz).getRepresentedClass().isInstance(obj);
         }
 
-        typeError(Context.getGlobal(), "instanceof.on.non.object");
+        if (clazz instanceof ScriptObjectMirror) {
+            if (obj instanceof ScriptObjectMirror) {
+                return ((ScriptObjectMirror)clazz).isInstance((ScriptObjectMirror)obj);
+            }
+            return false;
+        }
 
-        return false;
+        throw typeError("instanceof.on.non.object");
     }
 
     /**
-     * ECMA 11.8.1 - The less than operator (<) - generic implementation
+     * ECMA 11.8.1 - The less than operator ({@literal <}) - generic implementation
      *
      * @param x first object to compare
      * @param y second object to compare
@@ -795,7 +886,7 @@ public final class ScriptRuntime {
     }
 
     /**
-     * ECMA 11.8.2 - The greater than operator (>) - generic implementation
+     * ECMA 11.8.2 - The greater than operator ({@literal >}) - generic implementation
      *
      * @param x first object to compare
      * @param y second object to compare
@@ -808,7 +899,7 @@ public final class ScriptRuntime {
     }
 
     /**
-     * ECMA 11.8.3 - The less than or equal operator (<=) - generic implementation
+     * ECMA 11.8.3 - The less than or equal operator ({@literal <=}) - generic implementation
      *
      * @param x first object to compare
      * @param y second object to compare
@@ -821,7 +912,7 @@ public final class ScriptRuntime {
     }
 
     /**
-     * ECMA 11.8.4 - The greater than or equal operator (>=) - generic implementation
+     * ECMA 11.8.4 - The greater than or equal operator ({@literal >=}) - generic implementation
      *
      * @param x first object to compare
      * @param y second object to compare

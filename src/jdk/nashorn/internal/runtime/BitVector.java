@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,7 +30,7 @@ import java.util.Arrays;
 /**
  * Faster implementation of BitSet
  */
-public class BitVector implements Cloneable {
+public final class BitVector implements Cloneable {
     /** Number of bits per slot. */
     private static final int BITSPERSLOT = 64;
 
@@ -67,7 +67,7 @@ public class BitVector implements Cloneable {
      * @param bits a bits array from another bit vector
      */
     public BitVector(final long[] bits) {
-        this.bits = bits;
+        this.bits = bits.clone();
     }
 
     /**
@@ -75,7 +75,7 @@ public class BitVector implements Cloneable {
      * @param other the source
      */
     public void copy(final BitVector other) {
-        bits = Arrays.copyOf(other.bits, other.bits.length);
+        bits = other.bits.clone();
     }
 
     /**

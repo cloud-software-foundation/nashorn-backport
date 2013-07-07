@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,31 +26,23 @@
 package jdk.nashorn.internal.ir.debug;
 
 import java.util.List;
-import jdk.nashorn.internal.ir.AccessNode;
+
+import jdk.nashorn.internal.ir.BinaryNode;
 import jdk.nashorn.internal.ir.Block;
-import jdk.nashorn.internal.ir.BreakNode;
-import jdk.nashorn.internal.ir.CallNode;
 import jdk.nashorn.internal.ir.CaseNode;
 import jdk.nashorn.internal.ir.CatchNode;
-import jdk.nashorn.internal.ir.ContinueNode;
-import jdk.nashorn.internal.ir.DoWhileNode;
 import jdk.nashorn.internal.ir.ExecuteNode;
 import jdk.nashorn.internal.ir.ForNode;
 import jdk.nashorn.internal.ir.FunctionNode;
 import jdk.nashorn.internal.ir.IfNode;
-import jdk.nashorn.internal.ir.IndexNode;
 import jdk.nashorn.internal.ir.LabelNode;
-import jdk.nashorn.internal.ir.LineNumberNode;
+import jdk.nashorn.internal.ir.LexicalContext;
 import jdk.nashorn.internal.ir.Node;
-import jdk.nashorn.internal.ir.ReferenceNode;
-import jdk.nashorn.internal.ir.ReturnNode;
-import jdk.nashorn.internal.ir.RuntimeNode;
 import jdk.nashorn.internal.ir.SplitNode;
+import jdk.nashorn.internal.ir.Statement;
 import jdk.nashorn.internal.ir.SwitchNode;
 import jdk.nashorn.internal.ir.Symbol;
-import jdk.nashorn.internal.ir.ThrowNode;
 import jdk.nashorn.internal.ir.TryNode;
-import jdk.nashorn.internal.ir.UnaryNode;
 import jdk.nashorn.internal.ir.VarNode;
 import jdk.nashorn.internal.ir.WhileNode;
 import jdk.nashorn.internal.ir.WithNode;
@@ -62,9 +54,9 @@ import jdk.nashorn.internal.ir.visitor.NodeVisitor;
  *
  * see the flags --print-parse and --print-lower-parse
  */
-public final class PrintVisitor extends NodeVisitor {
+public final class PrintVisitor extends NodeVisitor<LexicalContext> {
     /** Tab width */
-    private static final int TABWIDTH = 1;
+    private static final int TABWIDTH = 4;
 
     /** Composing buffer. */
     private final StringBuilder sb;
@@ -77,6 +69,8 @@ public final class PrintVisitor extends NodeVisitor {
 
     /** Print line numbers */
     private final boolean printLineNumbers;
+
+    private int lastLineNumber = -1;
 
     /**
      * Constructor.
@@ -91,6 +85,7 @@ public final class PrintVisitor extends NodeVisitor {
      * @param printLineNumbers  should line number nodes be included in the output?
      */
     public PrintVisitor(final boolean printLineNumbers) {
+        super(new LexicalContext());
         this.EOLN             = System.lineSeparator();
         this.sb               = new StringBuilder();
         this.printLineNumbers = printLineNumbers;
@@ -137,53 +132,40 @@ public final class PrintVisitor extends NodeVisitor {
     /*
      * Visits.
      */
+
     @Override
-    public Node enter(final AccessNode accessNode) {
-        accessNode.toString(sb);
-        return null;
+    public boolean enterDefault(final Node node) {
+        node.toString(sb);
+        return false;
     }
 
     @Override
-    public Node enter(final Block block) {
+    public boolean enterBlock(final Block block) {
         sb.append(' ');
+        //sb.append(Debug.id(block));
         sb.append('{');
 
         indent += TABWIDTH;
 
-        final boolean isFunction = block instanceof FunctionNode;
-
-        if (isFunction) {
-            final FunctionNode       function  = (FunctionNode)block;
-            final List<FunctionNode> functions = function.getFunctions();
-
-            for (final FunctionNode f : functions) {
-                sb.append(EOLN);
-                indent();
-                f.accept(this);
-            }
-
-            if (!functions.isEmpty()) {
-                sb.append(EOLN);
-            }
-        }
-
-        final List<Node> statements = block.getStatements();
-
-        boolean lastLineNumber = false;
+        final List<Statement> statements = block.getStatements();
 
         for (final Node statement : statements) {
-            if (printLineNumbers || !lastLineNumber) {
-                sb.append(EOLN);
-                indent();
+            if (printLineNumbers && (statement instanceof Statement)) {
+                final int lineNumber = ((Statement)statement).getLineNumber();
+                sb.append('\n');
+                if (lineNumber != lastLineNumber) {
+                    indent();
+                    sb.append("[|").append(lineNumber).append("|];").append('\n');
+                }
+                lastLineNumber = lineNumber;
             }
+            indent();
 
-            if (statement instanceof UnaryNode) {
-                statement.toString(sb);
-            } else {
-                statement.accept(this);
+            statement.accept(this);
+
+            if (statement instanceof FunctionNode) {
+                continue;
             }
-
-            lastLineNumber = statement instanceof LineNumberNode;
 
             final Symbol symbol = statement.getSymbol();
 
@@ -193,12 +175,14 @@ public final class PrintVisitor extends NodeVisitor {
                 sb.append(']');
             }
 
-            final char lastChar = sb.charAt(sb.length() - 1);
+            int  lastIndex = sb.length() - 1;
+            char lastChar  = sb.charAt(lastIndex);
+            while (Character.isWhitespace(lastChar) && lastIndex >= 0) {
+                lastChar = sb.charAt(--lastIndex);
+            }
 
             if (lastChar != '}' && lastChar != ';') {
-                if (printLineNumbers || !lastLineNumber) {
-                    sb.append(';');
-                }
+                sb.append(';');
             }
 
             if (statement.hasGoto()) {
@@ -214,74 +198,45 @@ public final class PrintVisitor extends NodeVisitor {
 
         sb.append(EOLN);
         indent();
-        sb.append("}");
+        sb.append('}');
+       // sb.append(Debug.id(block));
 
-        if (isFunction) {
-            sb.append(EOLN);
-        }
-
-        return null;
+        return false;
     }
 
     @Override
-    public Node enter(final BreakNode breakNode) {
-        breakNode.toString(sb);
-        return null;
-    }
-
-    @Override
-    public Node enter(final CallNode callNode) {
-        callNode.toString(sb);
-        return null;
-    }
-
-    @Override
-    public Node enter(final ContinueNode continueNode) {
-        continueNode.toString(sb);
-        return null;
-    }
-
-    @Override
-    public Node enter(final DoWhileNode doWhileNode) {
-        sb.append("do");
-        doWhileNode.getBody().accept(this);
+    public boolean enterBinaryNode(final BinaryNode binaryNode) {
+        binaryNode.lhs().accept(this);
         sb.append(' ');
-        doWhileNode.toString(sb);
-
-        return null;
+        sb.append(binaryNode.tokenType());
+        sb.append(' ');
+        binaryNode.rhs().accept(this);
+        return false;
     }
 
     @Override
-    public Node enter(final ExecuteNode executeNode) {
-        final Node expression = executeNode.getExpression();
-
-        if (expression instanceof UnaryNode) {
-            expression.toString(sb);
-        } else {
-            expression.accept(this);
-        }
-
-        return null;
+    public boolean enterExecuteNode(final ExecuteNode executeNode) {
+        executeNode.getExpression().accept(this);
+        return false;
     }
 
     @Override
-    public Node enter(final ForNode forNode) {
+    public boolean enterForNode(final ForNode forNode) {
         forNode.toString(sb);
         forNode.getBody().accept(this);
-
-        return null;
+        return false;
     }
 
     @Override
-    public Node enter(final FunctionNode functionNode) {
+    public boolean enterFunctionNode(final FunctionNode functionNode) {
         functionNode.toString(sb);
-        enter((Block)functionNode);
-
-        return null;
+        enterBlock(functionNode.getBody());
+        //sb.append(EOLN);
+        return false;
     }
 
     @Override
-    public Node enter(final IfNode ifNode) {
+    public boolean enterIfNode(final IfNode ifNode) {
         ifNode.toString(sb);
         ifNode.getPass().accept(this);
 
@@ -292,65 +247,31 @@ public final class PrintVisitor extends NodeVisitor {
             fail.accept(this);
         }
 
-        return null;
+        return false;
     }
 
     @Override
-    public Node enter(final IndexNode indexNode) {
-        indexNode.toString(sb);
-        return null;
-    }
-
-    @Override
-    public Node enter(final LabelNode labeledNode) {
+    public boolean enterLabelNode(final LabelNode labeledNode) {
         indent -= TABWIDTH;
         indent();
         indent += TABWIDTH;
         labeledNode.toString(sb);
         labeledNode.getBody().accept(this);
 
-        return null;
+        return false;
     }
 
     @Override
-    public Node enter(final LineNumberNode lineNumberNode) {
-        if (printLineNumbers) {
-            lineNumberNode.toString(sb);
-        }
-
-        return null;
-    }
-
-
-    @Override
-    public Node enter(final ReferenceNode referenceNode) {
-        referenceNode.toString(sb);
-        return null;
-    }
-
-    @Override
-    public Node enter(final ReturnNode returnNode) {
-        returnNode.toString(sb);
-        return null;
-    }
-
-    @Override
-    public Node enter(final RuntimeNode runtimeNode) {
-        runtimeNode.toString(sb);
-        return null;
-    }
-
-    @Override
-    public Node enter(final SplitNode splitNode) {
+    public boolean enterSplitNode(final SplitNode splitNode) {
         splitNode.toString(sb);
         sb.append(EOLN);
         indent += TABWIDTH;
         indent();
-        return splitNode;
+        return true;
     }
 
     @Override
-    public Node leave(final SplitNode splitNode) {
+    public Node leaveSplitNode(final SplitNode splitNode) {
         sb.append("</split>");
         sb.append(EOLN);
         indent -= TABWIDTH;
@@ -359,7 +280,7 @@ public final class PrintVisitor extends NodeVisitor {
     }
 
     @Override
-    public Node enter(final SwitchNode switchNode) {
+    public boolean enterSwitchNode(final SwitchNode switchNode) {
         switchNode.toString(sb);
         sb.append(" {");
 
@@ -379,24 +300,18 @@ public final class PrintVisitor extends NodeVisitor {
         indent();
         sb.append("}");
 
-        return null;
-   }
-
-    @Override
-    public Node enter(final ThrowNode throwNode) {
-        throwNode.toString(sb);
-        return null;
+        return false;
     }
 
     @Override
-    public Node enter(final TryNode tryNode) {
+    public boolean enterTryNode(final TryNode tryNode) {
         tryNode.toString(sb);
         tryNode.getBody().accept(this);
 
         final List<Block> catchBlocks = tryNode.getCatchBlocks();
 
         for (final Block catchBlock : catchBlocks) {
-            final CatchNode catchNode = (CatchNode) catchBlock.getStatements().get(0);
+            final CatchNode catchNode = (CatchNode)catchBlock.getStatements().get(0);
             catchNode.toString(sb);
             catchNode.getBody().accept(this);
         }
@@ -408,29 +323,43 @@ public final class PrintVisitor extends NodeVisitor {
             finallyBody.accept(this);
         }
 
-        return null;
+        return false;
     }
 
     @Override
-    public Node enter(final VarNode varNode) {
-        varNode.toString(sb);
-        return null;
+    public boolean enterVarNode(final VarNode varNode) {
+        sb.append("var ");
+        varNode.getName().toString(sb);
+        final Node init = varNode.getInit();
+        if (init != null) {
+            sb.append(" = ");
+            init.accept(this);
+        }
+
+        return false;
     }
 
     @Override
-    public Node enter(final WhileNode whileNode) {
-        whileNode.toString(sb);
-        whileNode.getBody().accept(this);
+    public boolean enterWhileNode(final WhileNode whileNode) {
+        if (whileNode.isDoWhile()) {
+            sb.append("do");
+            whileNode.getBody().accept(this);
+            sb.append(' ');
+            whileNode.toString(sb);
+        } else {
+            whileNode.toString(sb);
+            whileNode.getBody().accept(this);
+        }
 
-        return null;
+        return false;
     }
 
     @Override
-    public Node enter(final WithNode withNode) {
+    public boolean enterWithNode(final WithNode withNode) {
         withNode.toString(sb);
         withNode.getBody().accept(this);
 
-        return null;
+        return false;
     }
 
 }

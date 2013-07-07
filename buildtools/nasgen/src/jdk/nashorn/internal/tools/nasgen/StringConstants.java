@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,12 +28,12 @@ package jdk.nashorn.internal.tools.nasgen;
 import java.lang.invoke.MethodHandle;
 import java.lang.reflect.Method;
 import jdk.internal.org.objectweb.asm.Type;
+import jdk.nashorn.internal.lookup.Lookup;
 import jdk.nashorn.internal.objects.PrototypeObject;
 import jdk.nashorn.internal.objects.ScriptFunctionImpl;
 import jdk.nashorn.internal.runtime.PropertyMap;
 import jdk.nashorn.internal.runtime.ScriptFunction;
 import jdk.nashorn.internal.runtime.ScriptObject;
-import jdk.nashorn.internal.runtime.linker.Lookup;
 
 /**
  * String constants used for code generation/instrumentation.
@@ -55,7 +55,6 @@ public interface StringConstants {
     static final Type TYPE_SCRIPTFUNCTIONIMPL = Type.getType(ScriptFunctionImpl.class);
     static final Type TYPE_SCRIPTOBJECT       = Type.getType(ScriptObject.class);
 
-    static final String PROTOTYPE = "prototype";
     static final String PROTOTYPE_SUFFIX = "$Prototype";
     static final String CONSTRUCTOR_SUFFIX = "$Constructor";
     // This field name is known to Nashorn runtime (Context).
@@ -88,6 +87,8 @@ public interface StringConstants {
         Type.getMethodDescriptor(Type.VOID_TYPE, TYPE_STRING, TYPE_METHODHANDLE, TYPE_PROPERTYMAP, TYPE_METHODHANDLE_ARRAY);
     static final String SCRIPTFUNCTION_SETARITY = "setArity";
     static final String SCRIPTFUNCTION_SETARITY_DESC = Type.getMethodDescriptor(Type.VOID_TYPE, Type.INT_TYPE);
+    static final String SCRIPTFUNCTION_SETPROTOTYPE = "setPrototype";
+    static final String SCRIPTFUNCTION_SETPROTOTYPE_DESC = Type.getMethodDescriptor(Type.VOID_TYPE, TYPE_OBJECT);
     static final String PROTOTYPEOBJECT_TYPE = TYPE_PROTOTYPEOBJECT.getInternalName();
     static final String PROTOTYPEOBJECT_SETCONSTRUCTOR = "setConstructor";
     static final String PROTOTYPEOBJECT_SETCONSTRUCTOR_DESC = Type.getMethodDescriptor(Type.VOID_TYPE, TYPE_OBJECT, TYPE_OBJECT);
@@ -95,12 +96,10 @@ public interface StringConstants {
     static final String MAP_TYPE = TYPE_PROPERTYMAP.getInternalName();
     static final String MAP_DESC = TYPE_PROPERTYMAP.getDescriptor();
     static final String MAP_NEWMAP = "newMap";
-    static final String MAP_NEWMAP_DESC = Type.getMethodDescriptor(TYPE_PROPERTYMAP, TYPE_CLASS);
+    static final String MAP_NEWMAP_DESC = Type.getMethodDescriptor(TYPE_PROPERTYMAP);
     static final String MAP_DUPLICATE = "duplicate";
     static final String MAP_DUPLICATE_DESC = Type.getMethodDescriptor(TYPE_PROPERTYMAP);
-    static final String MAP_SETFLAGS = "setFlags";
     static final String LOOKUP_TYPE = TYPE_LOOKUP.getInternalName();
-    static final String LOOKUP_GETMETHOD = "getMethod";
     static final String LOOKUP_NEWPROPERTY = "newProperty";
     static final String LOOKUP_NEWPROPERTY_DESC =
         Type.getMethodDescriptor(TYPE_PROPERTYMAP, TYPE_PROPERTYMAP, TYPE_STRING, Type.INT_TYPE, TYPE_METHODHANDLE, TYPE_METHODHANDLE);

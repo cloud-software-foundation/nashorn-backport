@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,7 +31,7 @@ import static jdk.nashorn.internal.runtime.PropertyDescriptor.WRITABLE;
 
 import java.lang.invoke.MethodHandle;
 import java.util.Objects;
-import jdk.nashorn.internal.codegen.objects.ObjectClassGenerator;
+import jdk.nashorn.internal.codegen.ObjectClassGenerator;
 import jdk.nashorn.internal.codegen.types.Type;
 
 /**
@@ -41,7 +41,6 @@ import jdk.nashorn.internal.codegen.types.Type;
  *
  * @see PropertyMap
  * @see AccessorProperty
- * @see SpillProperty
  * @see UserAccessorProperty
  */
 public abstract class Property {
@@ -52,6 +51,9 @@ public abstract class Property {
      * be 'writable', 'configurable' and 'enumerable'. With negative flags,
      * we can use leave flag byte initialized with (the default) zero value.
      */
+
+    /** Mask for property being both writable, enumerable and configurable */
+    public static final int WRITABLE_ENUMERABLE_CONFIGURABLE = 0b0000_0000_0000;
 
     /** ECMA 8.6.1 - Is this property not writable? */
     public static final int NOT_WRITABLE     = 0b0000_0000_0001;
@@ -64,20 +66,23 @@ public abstract class Property {
 
     private static final int MODIFY_MASK     = 0b0000_0000_1111;
 
-    /** Is this a spill property? See {@link SpillProperty} */
+    /** Is this a spill property? See {@link AccessorProperty} */
     public static final int IS_SPILL         = 0b0000_0001_0000;
 
-    /** Is this a function parameter ? */
+    /** Is this a function parameter? */
     public static final int IS_PARAMETER     = 0b0000_0010_0000;
 
+    /** Is parameter accessed thru arguments? */
+    public static final int HAS_ARGUMENTS    = 0b0000_0100_0000;
+
     /** Is this property always represented as an Object? See {@link ObjectClassGenerator} and dual fields flag. */
-    public static final int IS_ALWAYS_OBJECT = 0b0000_0100_0000;
+    public static final int IS_ALWAYS_OBJECT = 0b0000_1000_0000;
 
     /** Can this property be primitive? */
-    public static final int CAN_BE_PRIMITIVE = 0b0000_1000_0000;
+    public static final int CAN_BE_PRIMITIVE = 0b0001_0000_0000;
 
     /** Can this property be undefined? */
-    public static final int CAN_BE_UNDEFINED = 0b0001_0000_0000;
+    public static final int CAN_BE_UNDEFINED = 0b0010_0000_0000;
 
     /** Property key. */
     private final String key;
@@ -85,15 +90,21 @@ public abstract class Property {
     /** Property flags. */
     protected int flags;
 
+    /** Property field number or spill slot. */
+    private final int slot;
+
     /**
      * Constructor
      *
      * @param key   property key
      * @param flags property flags
+     * @param slot  property field number or spill slot
      */
-    public Property(final String key, final int flags) {
+    public Property(final String key, final int flags, final int slot) {
+        assert key != null;
         this.key   = key;
         this.flags = flags;
+        this.slot  = slot;
     }
 
     /**
@@ -104,6 +115,7 @@ public abstract class Property {
     protected Property(final Property property) {
         this.key   = property.key;
         this.flags = property.flags;
+        this.slot  = property.slot;
     }
 
     /**
@@ -168,17 +180,19 @@ public abstract class Property {
 
     /**
      * Check whether this property has a user defined getter function. See {@link UserAccessorProperty}
+     * @param obj object containing getter
      * @return true if getter function exists, false is default
      */
-    public boolean hasGetterFunction() {
+    public boolean hasGetterFunction(final ScriptObject obj) {
         return false;
     }
 
     /**
      * Check whether this property has a user defined setter function. See {@link UserAccessorProperty}
+     * @param obj object containing setter
      * @return true if getter function exists, false is default
      */
-    public boolean hasSetterFunction() {
+    public boolean hasSetterFunction(final ScriptObject obj) {
         return false;
     }
 
@@ -215,6 +229,14 @@ public abstract class Property {
     }
 
     /**
+     * Check whether this property is in an object with arguments field
+     * @return true if has arguments
+     */
+    public boolean hasArguments() {
+        return (flags & HAS_ARGUMENTS) == HAS_ARGUMENTS;
+    }
+
+    /**
      * Check whether this is a spill property, i.e. one that will not
      * be stored in a specially generated field in the property class.
      * The spill pool is maintained separately, as a growing Object array
@@ -230,7 +252,7 @@ public abstract class Property {
      * Does this property use any slots in the spill array described in
      * {@link Property#isSpill}? In that case how many. Currently a property
      * only uses max one spill slot, but this may change in future representations
-     * Only {@link SpillProperty} instances use spill slots
+     * Only {@link AccessorProperty} instances use spill slots
      *
      * @return number of spill slots a property is using
      */
@@ -327,6 +349,35 @@ public abstract class Property {
     }
 
     /**
+     * Get the field number or spill slot
+     * @return number/slot, -1 if none exists
+     */
+    public int getSlot() {
+        return slot;
+    }
+
+    /**
+     * Set the value of this property in {@code owner}. This allows to bypass creation of the
+     * setter MethodHandle for spill and user accessor properties.
+     *
+     * @param self the this object
+     * @param owner the owner object
+     * @param value the new property value
+     * @param strict is this a strict setter?
+     */
+    public abstract void setObjectValue(ScriptObject self, ScriptObject owner, Object value, boolean strict);
+
+    /**
+     * Set the Object value of this property from {@code owner}. This allows to bypass creation of the
+     * getter MethodHandle for spill and user accessor properties.
+     *
+     * @param self the this object
+     * @param owner the owner object
+     * @return  the property value
+     */
+    public abstract Object getObjectValue(ScriptObject self, ScriptObject owner);
+
+    /**
      * Abstract method for retrieving the setter for the property. We do not know
      * anything about the internal representation when we request the setter, we only
      * know that the setter will take the property as a parameter of the given type.
@@ -370,18 +421,10 @@ public abstract class Property {
         return null;
     }
 
-    /**
-     * Get the spill slot as described in {@link Property#getSpillCount()}.
-     * @return spill slot, -1 if none exists
-     */
-    public int getSlot() {
-        return -1;
-    }
-
     @Override
     public int hashCode() {
         final Class<?> type = getCurrentType();
-        return Objects.hashCode(this.key) ^ flags ^ (type == null ? 0 : type.hashCode());
+        return Objects.hashCode(this.key) ^ flags ^ getSlot() ^ (type == null ? 0 : type.hashCode());
     }
 
     @Override
@@ -390,17 +433,16 @@ public abstract class Property {
             return true;
         }
 
-        if (!(other instanceof Property)) {
+        if (other == null || this.getClass() != other.getClass()) {
             return false;
         }
 
         final Property otherProperty = (Property)other;
-        final Object otherKey = otherProperty.key;
-        final Class<?> otherType = otherProperty.getCurrentType();
 
-        return flags == otherProperty.flags &&
-               (key == null ? otherKey == null : key.equals(otherKey)) &&
-               (getCurrentType() == otherType);
+        return getFlags()       == otherProperty.getFlags() &&
+               getSlot()        == otherProperty.getSlot() &&
+               getCurrentType() == otherProperty.getCurrentType() &&
+               getKey().equals(otherProperty.getKey());
     }
 
     @Override
@@ -416,6 +458,12 @@ public abstract class Property {
             append(" {").
             append(type == null ? "UNDEFINED" : Type.typeFor(type).getDescriptor()).
             append('}');
+
+        if (slot != -1) {
+            sb.append('[');
+            sb.append(slot);
+            sb.append(']');
+        }
 
         return sb.toString();
     }

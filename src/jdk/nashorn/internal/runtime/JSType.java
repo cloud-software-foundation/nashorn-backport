@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,9 +28,12 @@ package jdk.nashorn.internal.runtime;
 import static jdk.nashorn.internal.codegen.CompilerConstants.staticCall;
 import static jdk.nashorn.internal.runtime.ECMAErrors.typeError;
 
+import java.util.Locale;
+import jdk.internal.dynalink.beans.BeansLinker;
+import jdk.internal.dynalink.beans.StaticClass;
+import jdk.nashorn.api.scripting.ScriptObjectMirror;
 import jdk.nashorn.internal.codegen.CompilerConstants.Call;
 import jdk.nashorn.internal.parser.Lexer;
-import org.dynalang.dynalink.beans.StaticClass;
 
 /**
  * Representation for ECMAScript types - this maps directly to the ECMA script standard
@@ -102,6 +105,8 @@ public enum JSType {
     /** JavaScript compliant conversion function from Object to primitive */
     public static final Call TO_PRIMITIVE = staticCall(JSType.class, "toPrimitive", Object.class,  Object.class);
 
+    private static final double INT32_LIMIT = 4294967296.0;
+
     /**
      * The external type name as returned by ECMAScript "typeof" operator
      *
@@ -109,7 +114,7 @@ public enum JSType {
      */
     public final String typeName() {
         // For NULL, "object" has to be returned!
-        return ((this == NULL) ? OBJECT : this).name().toLowerCase();
+        return ((this == NULL) ? OBJECT : this).name().toLowerCase(Locale.ENGLISH);
     }
 
     /**
@@ -146,6 +151,14 @@ public enum JSType {
 
         if (obj instanceof StaticClass) {
             return JSType.FUNCTION;
+        }
+
+        if (BeansLinker.isDynamicMethod(obj)) {
+            return JSType.FUNCTION;
+        }
+
+        if (obj instanceof ScriptObjectMirror) {
+            return ((ScriptObjectMirror)obj).isFunction()? JSType.FUNCTION : JSType.OBJECT;
         }
 
         return JSType.OBJECT;
@@ -248,7 +261,7 @@ public enum JSType {
         final Object       result = sobj.getDefaultValue(hint);
 
         if (!isPrimitive(result)) {
-            typeError(Context.getGlobal(), "bad.default.value", result.toString());
+            throw typeError("bad.default.value", result.toString());
         }
 
         return result;
@@ -563,8 +576,11 @@ public enum JSType {
     }
 
     /**
-     * JavaScript compliant Object to integer conversion
-     * See ECMA 9.4 ToInteger
+     * JavaScript compliant Object to integer conversion. See ECMA 9.4 ToInteger
+     *
+     * <p>Note that this returns {@link java.lang.Integer#MAX_VALUE} or {@link java.lang.Integer#MIN_VALUE}
+     * for double values that exceed the int range, including positive and negative Infinity. It is the
+     * caller's responsibility to handle such values correctly.</p>
      *
      * @param obj  an object
      * @return an integer
@@ -574,8 +590,11 @@ public enum JSType {
     }
 
     /**
-     * JavaScript compliant Object to long conversion
-     * See ECMA 9.4 ToInteger
+     * JavaScript compliant Object to long conversion. See ECMA 9.4 ToInteger
+     *
+     * <p>Note that this returns {@link java.lang.Long#MAX_VALUE} or {@link java.lang.Long#MIN_VALUE}
+     * for double values that exceed the long range, including positive and negative Infinity. It is the
+     * caller's responsibility to handle such values correctly.</p>
      *
      * @param obj  an object
      * @return a long
@@ -612,10 +631,7 @@ public enum JSType {
      * @return an int32
      */
     public static int toInt32(final double num) {
-        if (Double.isInfinite(num)) {
-            return 0;
-        }
-        return (int)(long)num;
+        return (int)doubleToInt32(num);
     }
 
     /**
@@ -658,10 +674,7 @@ public enum JSType {
      * @return a uint32
      */
     public static long toUint32(final double num) {
-        if (Double.isInfinite(num)) {
-            return 0L;
-        }
-        return ((long)num) & 0xffff_ffffL;
+        return doubleToInt32(num) & MAX_UINT;
     }
 
     /**
@@ -702,10 +715,22 @@ public enum JSType {
      * @return a uint16
      */
     public static int toUint16(final double num) {
-        if (Double.isInfinite(num)) {
+        return ((int)doubleToInt32(num)) & 0xffff;
+    }
+
+    private static long doubleToInt32(final double num) {
+        final int exponent = Math.getExponent(num);
+        if (exponent < 31) {
+            return (long) num;  // Fits into 32 bits
+        }
+        if (exponent >= 84) {
+            // Either infinite or NaN or so large that shift / modulo will produce 0
+            // (52 bit mantissa + 32 bit target width).
             return 0;
         }
-        return ((int)(long)num) & 0xffff;
+        // This is rather slow and could probably be sped up using bit-fiddling.
+        final double d = (num >= 0) ? Math.floor(num) : Math.ceil(num);
+        return (long)(d % INT32_LIMIT);
     }
 
     /**
@@ -803,14 +828,27 @@ public enum JSType {
      * NativeObject type
      * See ECMA 9.9 ToObject
      *
+     * @param obj     the object to convert
+     *
+     * @return the wrapped object
+     */
+    public static Object toScriptObject(final Object obj) {
+        return toScriptObject(Context.getGlobalTrusted(), obj);
+    }
+
+    /**
+     * Object conversion. This is used to convert objects and numbers to their corresponding
+     * NativeObject type
+     * See ECMA 9.9 ToObject
+     *
      * @param global  the global object
      * @param obj     the object to convert
      *
      * @return the wrapped object
      */
-    public static Object toObject(final ScriptObject global, final Object obj) {
+    public static Object toScriptObject(final ScriptObject global, final Object obj) {
         if (nullOrUndefined(obj)) {
-            typeError(global, "not.an.object", ScriptRuntime.safeToString(obj));
+            throw typeError(global, "not.an.object", ScriptRuntime.safeToString(obj));
         }
 
         if (obj instanceof ScriptObject) {
@@ -851,7 +889,7 @@ public enum JSType {
         if (obj instanceof ScriptObject) {
             if (safe) {
                 final ScriptObject sobj = (ScriptObject)obj;
-                final GlobalObject gobj = (GlobalObject)Context.getGlobal();
+                final GlobalObject gobj = (GlobalObject)Context.getGlobalTrusted();
                 return gobj.isError(sobj) ?
                     ECMAException.safeToString(sobj) :
                     sobj.safeToString();
@@ -883,7 +921,7 @@ public enum JSType {
 
         for (int i = start; i < length ; i++) {
             if (digit(chars[i], radix) == -1) {
-                break;
+                return Double.NaN;
             }
             pos++;
         }

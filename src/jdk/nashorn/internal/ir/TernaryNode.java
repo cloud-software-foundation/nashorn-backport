@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,63 +25,50 @@
 
 package jdk.nashorn.internal.ir;
 
+import jdk.nashorn.internal.ir.annotations.Immutable;
 import jdk.nashorn.internal.ir.visitor.NodeVisitor;
-import jdk.nashorn.internal.runtime.Source;
 
 /**
  * TernaryNode nodes represent three operand operations (?:).
  */
-public class TernaryNode extends BinaryNode {
+@Immutable
+public final class TernaryNode extends Node {
+    private final Node lhs;
+
+    private final Node rhs;
+
     /** Third argument. */
-    private Node third;
+    private final Node third;
 
     /**
      * Constructor
      *
-     * @param source the source
      * @param token  token
      * @param lhs    left hand side node
      * @param rhs    right hand side node
      * @param third  third node
      */
-    public TernaryNode(final Source source, final long token, final Node lhs, final Node rhs, final Node third) {
-        super(source, token, lhs, rhs);
-
-        this.finish = third.getFinish();
+    public TernaryNode(final long token, final Node lhs, final Node rhs, final Node third) {
+        super(token, third.getFinish());
+        this.lhs = lhs;
+        this.rhs = rhs;
         this.third = third;
     }
 
-    private TernaryNode(final TernaryNode ternaryNode, final CopyState cs) {
-        super(ternaryNode, cs);
-
-        third = cs.existingOrCopy(ternaryNode.third);
+    private TernaryNode(final TernaryNode ternaryNode, final Node lhs, final Node rhs, final Node third) {
+        super(ternaryNode);
+        this.lhs = lhs;
+        this.rhs = rhs;
+        this.third = third;
     }
 
     @Override
-    protected Node copy(final CopyState cs) {
-        return new TernaryNode(this, cs);
-    }
-
-    @Override
-    public boolean equals(final Object other) {
-        if (!super.equals(other)) {
-            return false;
-        }
-        return third.equals(((TernaryNode)other).third());
-    }
-
-    @Override
-    public int hashCode() {
-        return super.hashCode() ^ third().hashCode();
-    }
-
-    @Override
-    public Node accept(final NodeVisitor visitor) {
-        if (visitor.enter(this) != null) {
-            lhs = lhs.accept(visitor);
-            rhs = rhs.accept(visitor);
-            third = third.accept(visitor);
-            return visitor.leave(this);
+    public Node accept(final NodeVisitor<? extends LexicalContext> visitor) {
+        if (visitor.enterTernaryNode(this)) {
+            final Node newLhs = lhs().accept(visitor);
+            final Node newRhs = rhs().accept(visitor);
+            final Node newThird = third.accept(visitor);
+            return visitor.leaveTernaryNode(setThird(newThird).setLHS(newLhs).setRHS(newRhs));
         }
 
         return this;
@@ -123,6 +110,22 @@ public class TernaryNode extends BinaryNode {
     }
 
     /**
+     * Get the lhs node for this ternary expression, i.e. "x" in x ? y : z
+     * @return a node
+     */
+    public Node lhs() {
+        return lhs;
+    }
+
+    /**
+     * Get the rhs node for this ternary expression, i.e. "y" in x ? y : z
+     * @return a node
+     */
+    public Node rhs() {
+        return rhs;
+    }
+
+    /**
      * Get the "third" node for this ternary expression, i.e. "z" in x ? y : z
      * @return a node
      */
@@ -131,10 +134,38 @@ public class TernaryNode extends BinaryNode {
     }
 
     /**
+     * Set the left hand side expression for this node
+     * @param lhs new left hand side expression
+     * @return a node equivalent to this one except for the requested change.
+     */
+    public TernaryNode setLHS(final Node lhs) {
+        if (this.lhs == lhs) {
+            return this;
+        }
+        return new TernaryNode(this, lhs, rhs, third);
+    }
+
+    /**
+     * Set the right hand side expression for this node
+     * @param rhs new left hand side expression
+     * @return a node equivalent to this one except for the requested change.
+     */
+    public TernaryNode setRHS(final Node rhs) {
+        if (this.rhs == rhs) {
+            return this;
+        }
+        return new TernaryNode(this, lhs, rhs, third);
+    }
+
+    /**
      * Reset the "third" node for this ternary expression, i.e. "z" in x ? y : z
      * @param third a node
+     * @return a node equivalent to this one except for the requested change.
      */
-    public void setThird(final Node third) {
-        this.third = third;
+    public TernaryNode setThird(final Node third) {
+        if (this.third == third) {
+            return this;
+        }
+        return new TernaryNode(this, lhs, rhs, third);
     }
 }

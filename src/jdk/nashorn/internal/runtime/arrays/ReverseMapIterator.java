@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,7 +35,7 @@ final class ReverseMapIterator extends MapIterator {
 
     ReverseMapIterator(final ScriptObject obj, final boolean includeUndefined) {
         super(obj, includeUndefined);
-        this.index = JSType.toInt32(obj.getLength()) - 1;
+        this.index = JSType.toUint32(obj.getLength()) - 1;
     }
 
     @Override
@@ -49,7 +49,7 @@ final class ReverseMapIterator extends MapIterator {
     }
 
     @Override
-    protected int bumpIndex() {
+    protected long bumpIndex() {
         return index--;
     }
 }

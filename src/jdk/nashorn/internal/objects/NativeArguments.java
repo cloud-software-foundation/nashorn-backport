@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,10 +25,9 @@
 
 package jdk.nashorn.internal.objects;
 
+import static jdk.nashorn.internal.lookup.Lookup.MH;
 import static jdk.nashorn.internal.runtime.ECMAErrors.typeError;
 import static jdk.nashorn.internal.runtime.ScriptRuntime.UNDEFINED;
-import static jdk.nashorn.internal.runtime.arrays.ArrayIndex.getArrayIndexNoThrow;
-import static jdk.nashorn.internal.runtime.linker.Lookup.MH;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -42,7 +41,8 @@ import jdk.nashorn.internal.runtime.ScriptObject;
 import jdk.nashorn.internal.runtime.ScriptRuntime;
 import jdk.nashorn.internal.runtime.arrays.ArrayData;
 import jdk.nashorn.internal.runtime.arrays.ArrayIndex;
-import jdk.nashorn.internal.runtime.linker.Lookup;
+import jdk.nashorn.internal.lookup.Lookup;
+import jdk.nashorn.internal.lookup.MethodHandleFactory;
 
 /**
  * ECMA 10.6 Arguments Object.
@@ -61,13 +61,17 @@ public final class NativeArguments extends ScriptObject {
     private static final MethodHandle G$CALLEE = findOwnMH("G$callee", Object.class, Object.class);
     private static final MethodHandle S$CALLEE = findOwnMH("S$callee", void.class, Object.class, Object.class);
 
-    private static final PropertyMap nasgenmap$;
+    private static final PropertyMap map$;
 
     static {
-        PropertyMap map = PropertyMap.newMap(NativeArguments.class);
+        PropertyMap map = PropertyMap.newMap();
         map = Lookup.newProperty(map, "length", Property.NOT_ENUMERABLE, G$LENGTH, S$LENGTH);
         map = Lookup.newProperty(map, "callee", Property.NOT_ENUMERABLE, G$CALLEE, S$CALLEE);
-        nasgenmap$ = map;
+        map$ = map;
+    }
+
+    static PropertyMap getInitialMap() {
+        return map$;
     }
 
     private Object length;
@@ -76,8 +80,8 @@ public final class NativeArguments extends ScriptObject {
     // This is lazily initialized - only when delete is invoked at all
     private BitSet deleted;
 
-    NativeArguments(final Object[] arguments, final Object callee, final int numParams) {
-        super(nasgenmap$);
+    NativeArguments(final Object[] arguments, final Object callee, final int numParams, final ScriptObject proto, final PropertyMap map) {
+        super(proto, map);
         setIsArguments();
 
         setArray(ArrayData.allocate(arguments));
@@ -102,9 +106,6 @@ public final class NativeArguments extends ScriptObject {
         }
         System.arraycopy(arguments, 0, newValues, 0, Math.min(newValues.length, arguments.length));
         this.namedArgs = ArrayData.allocate(newValues);
-
-        // set Object.prototype as __proto__
-        this.setProto(Global.objectPrototype());
     }
 
     @Override
@@ -126,109 +127,109 @@ public final class NativeArguments extends ScriptObject {
     @Override
     public void setArgument(final int key, final Object value) {
         if (namedArgs.has(key)) {
-            namedArgs.set(key, value, false);
+            namedArgs = namedArgs.set(key, value, false);
         }
     }
 
     @Override
     public int getInt(final Object key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getInt(index) : super.getInt(key);
     }
 
     @Override
     public int getInt(final double key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getInt(index) : super.getInt(key);
     }
 
     @Override
     public int getInt(final long key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getInt(index) : super.getInt(key);
     }
 
     @Override
     public int getInt(final int key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getInt(index) : super.getInt(key);
     }
 
     @Override
     public long getLong(final Object key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getLong(index) : super.getLong(key);
     }
 
     @Override
     public long getLong(final double key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getLong(index) : super.getLong(key);
     }
 
     @Override
     public long getLong(final long key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getLong(index) : super.getLong(key);
     }
 
     @Override
     public long getLong(final int key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getLong(index) : super.getLong(key);
     }
 
     @Override
     public double getDouble(final Object key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getDouble(index) : super.getDouble(key);
     }
 
     @Override
     public double getDouble(final double key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getDouble(index) : super.getDouble(key);
     }
 
     @Override
     public double getDouble(final long key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getDouble(index) : super.getDouble(key);
     }
 
     @Override
     public double getDouble(final int key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getDouble(index) : super.getDouble(key);
     }
 
     @Override
     public Object get(final Object key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getObject(index) : super.get(key);
     }
 
     @Override
     public Object get(final double key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getObject(index) : super.get(key);
     }
 
     @Override
     public Object get(final long key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getObject(index) : super.get(key);
     }
 
     @Override
     public Object get(final int key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) ? namedArgs.getObject(index) : super.get(key);
     }
 
     @Override
     public void set(final Object key, final int value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -238,7 +239,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final Object key, final long value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -248,7 +249,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final Object key, final double value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -258,7 +259,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final Object key, final Object value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -268,7 +269,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final double key, final int value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -278,7 +279,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final double key, final long value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -288,7 +289,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final double key, final double value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -298,7 +299,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final double key, final Object value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -308,7 +309,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final long key, final int value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -318,7 +319,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final long key, final long value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -328,7 +329,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final long key, final double value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -338,7 +339,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final long key, final Object value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -348,7 +349,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final int key, final int value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -358,7 +359,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final int key, final long value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -368,7 +369,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final int key, final double value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -378,7 +379,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public void set(final int key, final Object value, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (isMapped(index)) {
             namedArgs = namedArgs.set(index, value, strict);
         } else {
@@ -388,55 +389,55 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public boolean has(final Object key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) || super.has(key);
     }
 
     @Override
     public boolean has(final double key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) || super.has(key);
     }
 
     @Override
     public boolean has(final long key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) || super.has(key);
     }
 
     @Override
     public boolean has(final int key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) || super.has(key);
     }
 
     @Override
     public boolean hasOwnProperty(final Object key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) || super.hasOwnProperty(key);
     }
 
     @Override
     public boolean hasOwnProperty(final int key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) || super.hasOwnProperty(key);
     }
 
     @Override
     public boolean hasOwnProperty(final long key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) || super.hasOwnProperty(key);
     }
 
     @Override
     public boolean hasOwnProperty(final double key) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         return isMapped(index) || super.hasOwnProperty(key);
     }
 
     @Override
     public boolean delete(final int key, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         final boolean success = super.delete(key, strict);
         if (success && namedArgs.has(index)) {
             setDeleted(index);
@@ -446,7 +447,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public boolean delete(final long key, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         final boolean success = super.delete(key, strict);
         if (success && namedArgs.has(index)) {
             setDeleted(index);
@@ -456,7 +457,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public boolean delete(final double key, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         final boolean success = super.delete(key, strict);
         if (success && namedArgs.has(index)) {
             setDeleted(index);
@@ -466,7 +467,7 @@ public final class NativeArguments extends ScriptObject {
 
     @Override
     public boolean delete(final Object key, final boolean strict) {
-        final int index = getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         final boolean success = super.delete(key, strict);
         if (success && namedArgs.has(index)) {
             setDeleted(index);
@@ -480,12 +481,12 @@ public final class NativeArguments extends ScriptObject {
      */
     @Override
     public boolean defineOwnProperty(final String key, final Object propertyDesc, final boolean reject) {
-        final int index = ArrayIndex.getArrayIndexNoThrow(key);
+        final int index = ArrayIndex.getArrayIndex(key);
         if (index >= 0) {
             final boolean allowed = super.defineOwnProperty(key, propertyDesc, false);
             if (!allowed) {
                 if (reject) {
-                    typeError(Global.instance(), "cant.redefine.property",  key, ScriptRuntime.safeToString(this));
+                    throw typeError("cant.redefine.property",  key, ScriptRuntime.safeToString(this));
                 }
                 return false;
             }
@@ -551,8 +552,15 @@ public final class NativeArguments extends ScriptObject {
      * @return Arguments Object
      */
     public static ScriptObject allocate(final Object[] arguments, final ScriptFunction callee, final int numParams) {
-        final boolean isStrict = callee.isStrict();
-        return isStrict ? new NativeStrictArguments(arguments, numParams) : new NativeArguments(arguments, callee, numParams);
+        // Strict functions won't always have a callee for arguments, and will pass null instead.
+        final boolean isStrict = callee == null || callee.isStrict();
+        final Global global = Global.instance();
+        final ScriptObject proto = global.getObjectPrototype();
+        if (isStrict) {
+            return new NativeStrictArguments(arguments, numParams, proto, global.getStrictArgumentsMap());
+        } else {
+            return new NativeArguments(arguments, callee, numParams, proto, global.getArgumentsMap());
+        }
     }
 
     /**
@@ -602,6 +610,11 @@ public final class NativeArguments extends ScriptObject {
         }
     }
 
+    @Override
+    public Object getLength() {
+        return length;
+    }
+
     private Object getArgumentsLength() {
         return length;
     }
@@ -621,5 +634,4 @@ public final class NativeArguments extends ScriptObject {
     private static MethodHandle findOwnMH(final String name, final Class<?> rtype, final Class<?>... types) {
         return MH.findStatic(MethodHandles.lookup(), NativeArguments.class, name, MH.type(rtype, types));
     }
-
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,37 +25,33 @@
 
 package jdk.nashorn.internal.ir;
 
-import jdk.nashorn.internal.codegen.MethodEmitter;
+import jdk.nashorn.internal.ir.annotations.Immutable;
 import jdk.nashorn.internal.ir.visitor.NodeVisitor;
-import jdk.nashorn.internal.runtime.Source;
 
 /**
  * IR representation for {@code break} statements.
  */
-public class BreakNode extends LabeledNode {
+@Immutable
+public final class BreakNode extends Statement {
 
-     /**
+    private final IdentNode label;
+
+    /**
      * Constructor
      *
-     * @param source     source code
+     * @param lineNumber line number
      * @param token      token
      * @param finish     finish
-     * @param labelNode  break label
-     * @param targetNode node to break to
-     * @param tryChain   surrounding try chain
+     * @param label      label for break or null if none
      */
-    public BreakNode(final Source source, final long token, final int finish, final LabelNode labelNode, final Node targetNode, final TryNode tryChain) {
-        super(source, token, finish, labelNode, targetNode, tryChain);
-        setHasGoto();
-    }
-
-    private BreakNode(final BreakNode breakNode, final CopyState cs) {
-        super(breakNode, cs);
+    public BreakNode(final int lineNumber, final long token, final int finish, final IdentNode label) {
+        super(lineNumber, token, finish);
+        this.label = label;
     }
 
     @Override
-    protected Node copy(final CopyState cs) {
-        return new BreakNode(this, cs);
+    public boolean hasGoto() {
+        return true;
     }
 
     /**
@@ -63,35 +59,29 @@ public class BreakNode extends LabeledNode {
      * @param visitor IR navigating visitor.
      */
     @Override
-    public Node accept(final NodeVisitor visitor) {
-        if (visitor.enter(this) != null) {
-            return visitor.leave(this);
+    public Node accept(final NodeVisitor<? extends LexicalContext> visitor) {
+        if (visitor.enterBreakNode(this)) {
+            return visitor.leaveBreakNode(this);
         }
 
         return this;
     }
 
     /**
-     * Return the target label of this break node.
-     * @return the target label.
+     * Get the label for this break node
+     * @return label, or null if none
      */
-    public MethodEmitter.Label getTargetLabel() {
-        if (targetNode instanceof BreakableNode) {
-            return ((BreakableNode)targetNode).getBreakLabel();
-        } else if (targetNode instanceof Block) {
-            return ((Block)targetNode).getBreakLabel();
-        }
-
-        throw new AssertionError("Invalid break target " + targetNode.getClass());
+    public IdentNode getLabel() {
+        return label;
     }
 
     @Override
     public void toString(final StringBuilder sb) {
         sb.append("break");
 
-        if (labelNode != null) {
+        if (label != null) {
             sb.append(' ');
-            labelNode.getLabel().toString(sb);
+            label.toString(sb);
         }
     }
 }

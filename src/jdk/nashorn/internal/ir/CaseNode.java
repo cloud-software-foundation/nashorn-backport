@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,20 +25,21 @@
 
 package jdk.nashorn.internal.ir;
 
-import jdk.nashorn.internal.codegen.MethodEmitter.Label;
+import jdk.nashorn.internal.codegen.Label;
+import jdk.nashorn.internal.ir.annotations.Immutable;
 import jdk.nashorn.internal.ir.visitor.NodeVisitor;
-import jdk.nashorn.internal.runtime.Source;
 
 /**
  * IR representation of CASE clause.
- *
+ * Case nodes are not BreakableNodes, but the SwitchNode is
  */
-public class CaseNode extends BreakableNode {
+@Immutable
+public final class CaseNode extends Node {
     /** Test expression. */
-    private Node test;
+    private final Node test;
 
     /** Statements. */
-    private Block body;
+    private final Block body;
 
     /** Case entry label. */
     private final Label entry;
@@ -46,31 +47,30 @@ public class CaseNode extends BreakableNode {
     /**
      * Constructors
      *
-     * @param source   the source
      * @param token    token
      * @param finish   finish
      * @param test     case test node, can be any node in JavaScript
      * @param body     case body
      */
-    public CaseNode(final Source source, final long token, final int finish, final Node test, final Block body) {
-        super(source, token, finish);
+    public CaseNode(final long token, final int finish, final Node test, final Block body) {
+        super(token, finish);
 
         this.test  = test;
         this.body  = body;
         this.entry = new Label("entry");
     }
 
-    private CaseNode(final CaseNode caseNode, final CopyState cs) {
+    CaseNode(final CaseNode caseNode, final Node test, final Block body) {
         super(caseNode);
 
-        this.test  = cs.existingOrCopy(caseNode.test);
-        this.body  = (Block)cs.existingOrCopy(caseNode.body);
+        this.test  = test;
+        this.body  = body;
         this.entry = new Label(caseNode.entry);
     }
 
     @Override
-    protected Node copy(final CopyState cs) {
-        return new CaseNode(this, cs);
+    public boolean isTerminal() {
+        return body.isTerminal();
     }
 
     /**
@@ -78,16 +78,12 @@ public class CaseNode extends BreakableNode {
      * @param visitor IR navigating visitor.
      */
     @Override
-    public Node accept(final NodeVisitor visitor) {
-        if (visitor.enter(this) != null) {
-            if (test != null) {
-                test = test.accept(visitor);
-            }
-            if (body != null) {
-                body = (Block)body.accept(visitor);
-            }
+    public Node accept(final NodeVisitor<? extends LexicalContext> visitor) {
+        if (visitor.enterCaseNode(this)) {
+            final Node  newTest = test == null ? null : test.accept(visitor);
+            final Block newBody = body == null ? null : (Block)body.accept(visitor);
 
-            return visitor.leave(this);
+            return visitor.leaveCaseNode(setTest(newTest).setBody(newBody));
         }
 
         return this;
@@ -131,8 +127,19 @@ public class CaseNode extends BreakableNode {
     /**
      * Reset the test expression for this case node
      * @param test new test expression
+     * @return new or same CaseNode
      */
-    public void setTest(final Node test) {
-        this.test = test;
+    public CaseNode setTest(final Node test) {
+        if (this.test == test) {
+            return this;
+        }
+        return new CaseNode(this, test, body);
+    }
+
+    private CaseNode setBody(final Block body) {
+        if (this.body == body) {
+            return this;
+        }
+        return new CaseNode(this, test, body);
     }
 }

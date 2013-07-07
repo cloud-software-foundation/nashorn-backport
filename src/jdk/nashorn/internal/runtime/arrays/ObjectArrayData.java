@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -139,6 +139,18 @@ final class ObjectArrayData extends ArrayData {
     }
 
     @Override
+    public ArrayData setEmpty(final int index) {
+        array[index] = ScriptRuntime.EMPTY;
+        return this;
+    }
+
+    @Override
+    public ArrayData setEmpty(final long lo, final long hi) {
+        Arrays.fill(array, (int)Math.max(lo, 0L), (int)Math.min(hi, Integer.MAX_VALUE), ScriptRuntime.EMPTY);
+        return this;
+    }
+
+    @Override
     public int getInt(final int index) {
         return JSType.toInt32(array[index]);
     }
@@ -165,11 +177,13 @@ final class ObjectArrayData extends ArrayData {
 
     @Override
     public ArrayData delete(final int index) {
+        setEmpty(index);
         return new DeletedRangeArrayFilter(this, index, index);
     }
 
     @Override
     public ArrayData delete(final long fromIndex, final long toIndex) {
+        setEmpty(fromIndex, toIndex);
         return new DeletedRangeArrayFilter(this, fromIndex, toIndex);
     }
 
@@ -181,7 +195,7 @@ final class ObjectArrayData extends ArrayData {
 
         final int newLength = (int) (length() - 1);
         final Object elem = array[newLength];
-        array[newLength] = 0;
+        setEmpty(newLength);
         setLength(newLength);
         return elem;
     }

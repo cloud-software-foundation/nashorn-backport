@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,14 +25,13 @@
 
 package jdk.nashorn.internal.codegen;
 
-import static jdk.nashorn.internal.codegen.MethodEmitter.Condition.EQ;
-import static jdk.nashorn.internal.codegen.MethodEmitter.Condition.GE;
-import static jdk.nashorn.internal.codegen.MethodEmitter.Condition.GT;
-import static jdk.nashorn.internal.codegen.MethodEmitter.Condition.LE;
-import static jdk.nashorn.internal.codegen.MethodEmitter.Condition.LT;
-import static jdk.nashorn.internal.codegen.MethodEmitter.Condition.NE;
+import static jdk.nashorn.internal.codegen.Condition.EQ;
+import static jdk.nashorn.internal.codegen.Condition.GE;
+import static jdk.nashorn.internal.codegen.Condition.GT;
+import static jdk.nashorn.internal.codegen.Condition.LE;
+import static jdk.nashorn.internal.codegen.Condition.LT;
+import static jdk.nashorn.internal.codegen.Condition.NE;
 
-import jdk.nashorn.internal.codegen.MethodEmitter.Label;
 import jdk.nashorn.internal.codegen.types.Type;
 import jdk.nashorn.internal.ir.BinaryNode;
 import jdk.nashorn.internal.ir.Node;

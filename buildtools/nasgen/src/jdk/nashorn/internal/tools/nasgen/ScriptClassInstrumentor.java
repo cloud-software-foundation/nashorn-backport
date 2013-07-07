@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -159,10 +159,14 @@ public class ScriptClassInstrumentor extends ClassVisitor {
             public void visitMethodInsn(final int opcode, final String owner, final String name, final String desc) {
                 if (isConstructor && opcode == INVOKESPECIAL &&
                         INIT.equals(name) && SCRIPTOBJECT_TYPE.equals(owner)) {
-                    super.visitFieldInsn(GETSTATIC, scriptClassInfo.getJavaName(),
-                            MAP_FIELD_NAME, MAP_DESC);
-                    super.visitMethodInsn(INVOKESPECIAL, SCRIPTOBJECT_TYPE, INIT,
-                            SCRIPTOBJECT_INIT_DESC);
+
+                    // replace call to empty super-constructor with one passing PropertyMap argument
+                    if (DEFAULT_INIT_DESC.equals(desc)) {
+                        super.visitFieldInsn(GETSTATIC, scriptClassInfo.getJavaName(), MAP_FIELD_NAME, MAP_DESC);
+                        super.visitMethodInsn(INVOKESPECIAL, SCRIPTOBJECT_TYPE, INIT, SCRIPTOBJECT_INIT_DESC);
+                    } else {
+                        super.visitMethodInsn(opcode, owner, name, desc);
+                    }
 
                     if (memberCount > 0) {
                         // initialize @Property fields if needed
@@ -223,7 +227,7 @@ public class ScriptClassInstrumentor extends ClassVisitor {
                 ClassGenerator.addSetter(cv, className, memInfo);
             }
         }
-        ClassGenerator.addMapField(this);
+        // omit addMapField() since instance classes already define a static PropertyMap field
     }
 
     void emitGettersSetters() {

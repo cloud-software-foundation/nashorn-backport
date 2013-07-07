@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,19 +27,22 @@ package jdk.nashorn.internal.ir.debug;
 
 import java.lang.reflect.Field;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+
 import jdk.nashorn.internal.ir.BinaryNode;
+import jdk.nashorn.internal.ir.Block;
 import jdk.nashorn.internal.ir.Node;
 import jdk.nashorn.internal.ir.TernaryNode;
 import jdk.nashorn.internal.ir.annotations.Ignore;
-import jdk.nashorn.internal.ir.annotations.ParentNode;
 import jdk.nashorn.internal.ir.annotations.Reference;
 import jdk.nashorn.internal.parser.Token;
 import jdk.nashorn.internal.runtime.Context;
+import jdk.nashorn.internal.runtime.Debug;
 
 /**
  * AST-as-text visualizer. Sometimes you want tree form and not source
@@ -47,7 +50,6 @@ import jdk.nashorn.internal.runtime.Context;
  *
  * see the flags --print-ast and --print-ast-lower
  */
-
 public final class ASTWriter {
     /** Root node from which to start the traversal */
     private final Node root;
@@ -71,12 +73,22 @@ public final class ASTWriter {
     @Override
     public String toString() {
         final StringBuilder sb = new StringBuilder();
-        printAST(sb, "root", root, 0);
+        printAST(sb, null, null, "root", root, 0);
         return sb.toString();
     }
 
+    /**
+     * Return the visited nodes in an ordered list
+     * @return the list of nodes in order
+     */
+    public Node[] toArray() {
+        final List<Node> preorder = new ArrayList<>();
+        printAST(new StringBuilder(), preorder, null, "root", root, 0);
+        return preorder.toArray(new Node[preorder.size()]);
+    }
+
     @SuppressWarnings("unchecked")
-    private void printAST(final StringBuilder sb, final String name, final Node node, final int indent) {
+    private void printAST(final StringBuilder sb, final List<Node> preorder, final Field field, final String name, final Node node, final int indent) {
         ASTWriter.indent(sb, indent);
         if (node == null) {
             sb.append("[Object ");
@@ -85,66 +97,35 @@ public final class ASTWriter {
             return;
         }
 
+        if (preorder != null) {
+            preorder.add(node);
+        }
+
+        final boolean isReference = field != null && field.getAnnotation(Reference.class) != null;
+
         Class<?> clazz = node.getClass();
-        String type    = clazz.getName();
+        String   type  = clazz.getName();
+
         type = type.substring(type.lastIndexOf('.') + 1, type.length());
- //       type += "@" + Debug.id(node) + "#" + node.getSymbol();
+        if (isReference) {
+            type = "ref: " + type;
+        }
+        type += "@" + Debug.id(node);
+        if (node.getSymbol() != null) {
+            type += "#" + node.getSymbol();
+        }
+
+        if (node instanceof Block && ((Block)node).needsScope()) {
+            type += " <scope>";
+        }
 
         final List<Field> children = new LinkedList<>();
-        final Deque<Class<?>> stack = new ArrayDeque<>();
 
-        /**
-         * Here is some ugliness that can be overcome by proper ChildNode annotations
-         * with proper orders. Right now we basically sort all classes up to Node
-         * with super class first, as this often is the natural order, e.g. base
-         * before index for an IndexNode.
-         *
-         * Also there are special cases as this is not true for UnaryNodes(lhs) and
-         * BinaryNodes extends UnaryNode (with lhs), and TernaryNodes.
-         *
-         * TODO - generalize traversal with an order built on annotations and this
-         * will go away.
-         */
-        do {
-            stack.push(clazz);
-            clazz = clazz.getSuperclass();
-        } while (clazz != null);
-
-        if (node instanceof TernaryNode) {
-            // HACK juggle "third"
-            stack.push(stack.removeLast());
-        }
-        // HACK change operator order for BinaryNodes to get lhs first.
-        final Iterator<Class<?>> iter = node instanceof BinaryNode ? stack.descendingIterator() : stack.iterator();
-
-        while (iter.hasNext()) {
-            final Class<?> c = iter.next();
-            for (final Field f : c.getDeclaredFields()) {
-                try {
-                    f.setAccessible(true);
-                    final Object child = f.get(node);
-                    if (child == null) {
-                        continue;
-                    }
-
-                    if (child instanceof Node) {
-                        children.add(f);
-                    } else if (child instanceof Collection) {
-                        if (!((Collection<?>)child).isEmpty()) {
-                            children.add(f);
-                        }
-                    }
-                } catch (final IllegalArgumentException | IllegalAccessException e) {
-                    return;
-                }
-            }
+        if (!isReference) {
+            enqueueChildren(node, clazz, children);
         }
 
         String status = "";
-
-        if (node.shouldDiscard()) {
-            status += " Discard";
-        }
 
         if (node.isTerminal()) {
             status += " Terminal";
@@ -154,8 +135,8 @@ public final class ASTWriter {
             status += " Goto ";
         }
 
-        if (node.getSymbol() != null && node.getSymbol().hasSlot()) {
-            status += " Slot " + node.getSymbol();
+        if (node.getSymbol() != null) {
+            status += node.getSymbol();
         }
 
         status = status.trim();
@@ -193,41 +174,86 @@ public final class ASTWriter {
                 append("]").
                 append('\n');
 
-            for (final Field field : children) {
-
-                if (field.getAnnotation(ParentNode.class) != null) {
-                    continue;
-                }
-                if (field.getAnnotation(Ignore.class) != null) {
-                    continue;
-                }
-                if (field.getAnnotation(Reference.class) != null) {
+            for (final Field child : children) {
+                if (child.getAnnotation(Ignore.class) != null) {
                     continue;
                 }
 
                 Object value;
                 try {
-                    value = field.get(node);
+                    value = child.get(node);
                 } catch (final IllegalArgumentException | IllegalAccessException e) {
                     Context.printStackTrace(e);
                     return;
                 }
 
                 if (value instanceof Node) {
-                    printAST(sb, field.getName(), (Node)value, indent + 1);
+                    printAST(sb, preorder, child, child.getName(), (Node)value, indent + 1);
                 } else if (value instanceof Collection) {
                     int pos = 0;
                     ASTWriter.indent(sb, indent + 1);
                     sb.append("[Collection ").
-                        append(field.getName()).
+                        append(child.getName()).
                         append("[0..").
                         append(((Collection<Node>)value).size()).
                         append("]]").
                         append('\n');
 
-                    for (final Node child : (Collection<Node>)value) {
-                        printAST(sb, field.getName() + "[" + pos++ + "]", child, indent + 2);
+                    for (final Node member : (Collection<Node>)value) {
+                        printAST(sb, preorder, child, child.getName() + "[" + pos++ + "]", member, indent + 2);
                     }
+                }
+            }
+        }
+    }
+
+    private static void enqueueChildren(final Node node, final Class<?> nodeClass, final List<Field> children) {
+        final Deque<Class<?>> stack = new ArrayDeque<>();
+
+        /**
+         * Here is some ugliness that can be overcome by proper ChildNode annotations
+         * with proper orders. Right now we basically sort all classes up to Node
+         * with super class first, as this often is the natural order, e.g. base
+         * before index for an IndexNode.
+         *
+         * Also there are special cases as this is not true for UnaryNodes(lhs) and
+         * BinaryNodes extends UnaryNode (with lhs), and TernaryNodes.
+         *
+         * TODO - generalize traversal with an order built on annotations and this
+         * will go away.
+         */
+        Class<?> clazz = nodeClass;
+        do {
+            stack.push(clazz);
+            clazz = clazz.getSuperclass();
+        } while (clazz != null);
+
+        if (node instanceof TernaryNode) {
+            // HACK juggle "third"
+            stack.push(stack.removeLast());
+        }
+        // HACK change operator order for BinaryNodes to get lhs first.
+        final Iterator<Class<?>> iter = node instanceof BinaryNode ? stack.descendingIterator() : stack.iterator();
+
+        while (iter.hasNext()) {
+            final Class<?> c = iter.next();
+            for (final Field f : c.getDeclaredFields()) {
+                try {
+                    f.setAccessible(true);
+                    final Object child = f.get(node);
+                    if (child == null) {
+                        continue;
+                    }
+
+                    if (child instanceof Node) {
+                        children.add(f);
+                    } else if (child instanceof Collection) {
+                        if (!((Collection<?>)child).isEmpty()) {
+                            children.add(f);
+                        }
+                    }
+                } catch (final IllegalArgumentException | IllegalAccessException e) {
+                    return;
                 }
             }
         }
@@ -235,10 +261,9 @@ public final class ASTWriter {
 
     private static void indent(final StringBuilder sb, final int indent) {
         for (int i = 0; i < indent; i++) {
-            for (int j = 0 ; j < TABWIDTH ; j++) {
+            for (int j = 0; j < TABWIDTH; j++) {
                 sb.append(' ');
             }
         }
     }
-
 }

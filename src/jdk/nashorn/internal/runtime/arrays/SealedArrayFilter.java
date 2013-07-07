@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,7 +27,6 @@ package jdk.nashorn.internal.runtime.arrays;
 
 import static jdk.nashorn.internal.runtime.ECMAErrors.typeError;
 
-import jdk.nashorn.internal.runtime.Context;
 import jdk.nashorn.internal.runtime.GlobalObject;
 import jdk.nashorn.internal.runtime.PropertyDescriptor;
 
@@ -47,7 +46,7 @@ class SealedArrayFilter extends ArrayFilter {
     @Override
     public boolean canDelete(final int index, final boolean strict) {
         if (strict) {
-            typeError(Context.getGlobal(), "cant.delete.property", Integer.toString(index), "sealed array");
+            throw typeError("cant.delete.property", Integer.toString(index), "sealed array");
         }
         return false;
     }

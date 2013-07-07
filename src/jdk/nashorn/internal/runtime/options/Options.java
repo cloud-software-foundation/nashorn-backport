@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -49,14 +49,13 @@ import jdk.nashorn.internal.runtime.QuotedStringTokenizer;
 
 /**
  * Manages global runtime options.
- *
  */
 public final class Options {
     /** Resource tag. */
     private final String resource;
 
     /** Error writer. */
-    private final PrintWriter errors;
+    private final PrintWriter err;
 
     /** File list. */
     private final List<String> files;
@@ -67,15 +66,29 @@ public final class Options {
     /** The options map of enabled options */
     private final TreeMap<String, Option<?>> options;
 
+    /** System property that can be used for command line option propagation */
+    private static final String NASHORN_ARGS_PROPERTY = "nashorn.args";
+
     /**
-     * Constructor.
+     * Constructor
+     *
+     * Options will use System.err as the output stream for any errors
      *
      * @param resource resource prefix for options e.g. "nashorn"
-     * @param errors   error stream for reporting parse errors
      */
-    public Options(final String resource, final PrintWriter errors) {
+    public Options(final String resource) {
+        this(resource, new PrintWriter(System.err, true));
+    }
+
+    /**
+     * Constructor
+     *
+     * @param resource resource prefix for options e.g. "nashorn"
+     * @param err      error stream for reporting parse errors
+     */
+    public Options(final String resource, final PrintWriter err) {
         this.resource  = resource;
-        this.errors    = errors;
+        this.err       = err;
         this.files     = new ArrayList<>();
         this.arguments = new ArrayList<>();
         this.options   = new TreeMap<>();
@@ -88,19 +101,10 @@ public final class Options {
                 if (v != null) {
                     set(t.getKey(), createOption(t, v));
                 } else if (t.getDefaultValue() != null) {
-                     set(t.getKey(), createOption(t, t.getDefaultValue()));
+                    set(t.getKey(), createOption(t, t.getDefaultValue()));
                  }
             }
         }
-    }
-
-    /**
-     * Constructor
-     *
-     * @param resource  e.g. "nashorn"
-     */
-    public Options(final String resource) {
-        this(resource, new PrintWriter(System.err, true));
     }
 
     /**
@@ -199,7 +203,7 @@ public final class Options {
 
     /**
      * Return an option given its resource key. If the key doesn't begin with
-     * <resource>.option it will be completed using the resource from this
+     * {@literal <resource>}.option it will be completed using the resource from this
      * instance
      *
      * @param key key for option
@@ -239,7 +243,13 @@ public final class Options {
      */
     public String getString(final String key) {
         final Option<?> option = get(key);
-        return option != null ? (String)option.getValue() : null;
+        if (option != null) {
+            final String value = (String)option.getValue();
+            if(value != null) {
+                return value.intern();
+            }
+        }
+        return null;
     }
 
     /**
@@ -343,17 +353,17 @@ public final class Options {
                 // display extended help information
                 displayHelp(true);
             } else {
-                errors.println(((IllegalOptionException)e).getTemplate());
+                err.println(((IllegalOptionException)e).getTemplate());
             }
             return;
         }
 
         if (e != null && e.getMessage() != null) {
-            errors.println(getMsg("option.error.invalid.option",
+            err.println(getMsg("option.error.invalid.option",
                     e.getMessage(),
                     helpOptionTemplate.getShortName(),
                     helpOptionTemplate.getName()));
-            errors.println();
+            err.println();
             return;
         }
 
@@ -368,8 +378,8 @@ public final class Options {
     public void displayHelp(final boolean extended) {
         for (final OptionTemplate t : Options.validOptions) {
             if ((extended || !t.isUndocumented()) && t.getResource().equals(resource)) {
-                errors.println(t);
-                errors.println();
+                err.println(t);
+                err.println();
             }
         }
     }
@@ -384,6 +394,14 @@ public final class Options {
     public void process(final String[] args) {
         final LinkedList<String> argList = new LinkedList<>();
         Collections.addAll(argList, args);
+
+    final String extra = getStringProperty(NASHORN_ARGS_PROPERTY, null);
+    if (extra != null) {
+        final StringTokenizer st = new StringTokenizer(extra);
+        while (st.hasMoreTokens()) {
+        argList.add(st.nextToken());
+        }
+    }
 
         while (!argList.isEmpty()) {
             final String arg = argList.remove(0);
@@ -414,7 +432,7 @@ public final class Options {
                     System.setProperty(value.substring(0, eq), value.substring(eq + 1));
                 } else {
                     // -Dfoo is fine. Set System property "foo" with "" as it's value
-                    if (!value.equals("")) {
+                    if (!value.isEmpty()) {
                         System.setProperty(value, "");
                     } else {
                         // do not allow empty property name
@@ -481,10 +499,10 @@ public final class Options {
         case "timezone":
             // default value "TimeZone.getDefault()"
             return new Option<>(TimeZone.getTimeZone(value));
+        case "locale":
+            return new Option<>(Locale.forLanguageTag(value));
         case "keyvalues":
             return new KeyValueOption(value);
-        case "values":
-            return new ValueOption(value);
         case "log":
             final KeyValueOption kv = new KeyValueOption(value);
             Logging.initialize(kv.getValues());
@@ -493,7 +511,7 @@ public final class Options {
             return new Option<>(value != null && Boolean.parseBoolean(value));
         case "integer":
             try {
-                return new Option<>((Integer)((value == null)? 0 : Integer.parseInt(value)));
+                return new Option<>((value == null) ? 0 : Integer.parseInt(value));
             } catch (final NumberFormatException nfe) {
                 throw new IllegalOptionException(t);
             }

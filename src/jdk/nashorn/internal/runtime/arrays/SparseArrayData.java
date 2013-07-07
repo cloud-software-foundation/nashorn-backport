@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -61,13 +61,15 @@ class SparseArrayData extends ArrayData {
 
     @Override
     public Object[] asObjectArray() {
-        final Object[] objArray = new Object[Math.min((int) length(), Integer.MAX_VALUE)];
+        final int length = (int) Math.min(length(), Integer.MAX_VALUE);
+        final int underlyingLength = (int) Math.min(length, underlying.length());
+        final Object[] objArray = new Object[length];
 
-        for (int i = 0; i < underlying.length(); i++) {
+        for (int i = 0; i < underlyingLength; i++) {
             objArray[i] = underlying.getObject(i);
         }
 
-        Arrays.fill(objArray, (int) underlying.length(), objArray.length, ScriptRuntime.UNDEFINED);
+        Arrays.fill(objArray, underlyingLength, length, ScriptRuntime.UNDEFINED);
 
         for (final Map.Entry<Long, Object> entry : sparseMap.entrySet()) {
             final long key = entry.getKey();
@@ -202,6 +204,18 @@ class SparseArrayData extends ArrayData {
     }
 
     @Override
+    public ArrayData setEmpty(final int index) {
+        underlying.setEmpty(index);
+        return this;
+    }
+
+    @Override
+    public ArrayData setEmpty(final long lo, final long hi) {
+        underlying.setEmpty(lo, hi);
+        return this;
+    }
+
+    @Override
     public int getInt(final int index) {
         if (index >= 0 && index < maxDenseLength) {
             return underlying.getInt(index);
@@ -273,7 +287,7 @@ class SparseArrayData extends ArrayData {
     }
 
     private static Long indexToKey(final int index) {
-        return Long.valueOf(index & 0xffff_ffffL);
+        return Long.valueOf(index & JSType.MAX_UINT);
     }
 
     @Override

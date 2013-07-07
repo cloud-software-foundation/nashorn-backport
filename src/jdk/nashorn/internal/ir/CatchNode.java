@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,57 +25,53 @@
 
 package jdk.nashorn.internal.ir;
 
+import jdk.nashorn.internal.ir.annotations.Immutable;
 import jdk.nashorn.internal.ir.visitor.NodeVisitor;
-import jdk.nashorn.internal.runtime.Source;
 
 /**
  * IR representation of a catch clause.
- *
  */
-public class CatchNode extends Node {
+@Immutable
+public final class CatchNode extends Statement {
     /** Exception identifier. */
-    private IdentNode exception;
+    private final IdentNode exception;
 
     /** Exception condition. */
-    private Node exceptionCondition;
+    private final Node exceptionCondition;
 
     /** Catch body. */
-    private Block body;
+    private final Block body;
 
-    /** Is rethrow - e.g. synthetic catch block for e.g. finallies, the parser case where
-     * there has to be at least on catch for syntactic validity */
-    private boolean isSyntheticRethrow;
+    private final int flags;
+
+    /** Is this block a synthethic rethrow created by finally inlining? */
+    public static final int IS_SYNTHETIC_RETHROW = 1;
 
     /**
      * Constructors
      *
-     * @param source             the source
+     * @param lineNumber         lineNumber
      * @param token              token
      * @param finish             finish
      * @param exception          variable name of exception
      * @param exceptionCondition exception condition
      * @param body               catch body
+     * @param flags              flags
      */
-    public CatchNode(final Source source, final long token, final int finish, final IdentNode exception, final Node exceptionCondition, final Block body) {
-        super (source, token, finish);
-
+    public CatchNode(final int lineNumber, final long token, final int finish, final IdentNode exception, final Node exceptionCondition, final Block body, final int flags) {
+        super(lineNumber, token, finish);
         this.exception          = exception;
         this.exceptionCondition = exceptionCondition;
         this.body               = body;
+        this.flags              = flags;
     }
 
-    private CatchNode(final CatchNode catchNode, final CopyState cs) {
+    private CatchNode(final CatchNode catchNode, final IdentNode exception, final Node exceptionCondition, final Block body, final int flags) {
         super(catchNode);
-
-        exception          = (IdentNode)cs.existingOrCopy(catchNode.exception);
-        exceptionCondition = cs.existingOrCopy(catchNode.exceptionCondition);
-        body               = (Block)cs.existingOrCopy(catchNode.body);
-        isSyntheticRethrow = catchNode.isSyntheticRethrow;
-     }
-
-    @Override
-    protected Node copy(final CopyState cs) {
-        return new CatchNode(this, cs);
+        this.exception          = exception;
+        this.exceptionCondition = exceptionCondition;
+        this.body               = body;
+        this.flags              = flags;
     }
 
     /**
@@ -83,19 +79,20 @@ public class CatchNode extends Node {
      * @param visitor IR navigating visitor.
      */
     @Override
-    public Node accept(final NodeVisitor visitor) {
-        if (visitor.enter(this) != null) {
-            exception = (IdentNode)exception.accept(visitor);
-
-            if (exceptionCondition != null) {
-                exceptionCondition = exceptionCondition.accept(visitor);
-            }
-
-            body = (Block)body.accept(visitor);
-            return visitor.leave(this);
+    public Node accept(final NodeVisitor<? extends LexicalContext> visitor) {
+        if (visitor.enterCatchNode(this)) {
+            return visitor.leaveCatchNode(
+                setException((IdentNode)exception.accept(visitor)).
+                setExceptionCondition(exceptionCondition == null ? null : exceptionCondition.accept(visitor)).
+                setBody((Block)body.accept(visitor)));
         }
 
         return this;
+    }
+
+    @Override
+    public boolean isTerminal() {
+        return body.isTerminal();
     }
 
     @Override
@@ -108,23 +105,6 @@ public class CatchNode extends Node {
             exceptionCondition.toString(sb);
         }
         sb.append(')');
-    }
-
-    /**
-     * Check if this catch is a synthetic rethrow
-     * @return true if this is a synthetic rethrow
-     */
-    public boolean isSyntheticRethrow() {
-        return isSyntheticRethrow;
-    }
-
-    /**
-     * Flag this as deliberatly generated catch all that rethrows the
-     * caught exception. This is used for example for generating finally
-     * expressions
-     */
-    public void setIsSyntheticRethrow() {
-        this.isSyntheticRethrow = true;
     }
 
     /**
@@ -146,9 +126,13 @@ public class CatchNode extends Node {
     /**
      * Reset the exception condition for this catch block
      * @param exceptionCondition the new exception condition
+     * @return new or same CatchNode
      */
-    public void setExceptionCondition(final Node exceptionCondition) {
-        this.exceptionCondition = exceptionCondition;
+    public CatchNode setExceptionCondition(final Node exceptionCondition) {
+        if (this.exceptionCondition == exceptionCondition) {
+            return this;
+        }
+        return new CatchNode(this, exception, exceptionCondition, body, flags);
     }
 
     /**
@@ -158,4 +142,35 @@ public class CatchNode extends Node {
     public Block getBody() {
         return body;
     }
+
+    /**
+     * Resets the exception of a catch block
+     * @param exception new exception
+     * @return new catch node if changed, same otherwise
+     */
+    public CatchNode setException(final IdentNode exception) {
+        if (this.exception == exception) {
+            return this;
+        }
+        return new CatchNode(this, exception, exceptionCondition, body, flags);
+    }
+
+    private CatchNode setBody(final Block body) {
+        if (this.body == body) {
+            return this;
+        }
+        return new CatchNode(this, exception, exceptionCondition, body, flags);
+    }
+
+    /**
+     * Is this catch block a non-JavaScript constructor, for example created as
+     * part of the rethrow mechanism of a finally block in Lower? Then we just
+     * pass the exception on and need not unwrap whatever is in the ECMAException
+     * object catch symbol
+     * @return true if a finally synthetic rethrow
+     */
+    public boolean isSyntheticRethrow() {
+        return (flags & IS_SYNTHETIC_RETHROW) == IS_SYNTHETIC_RETHROW;
+    }
+
 }

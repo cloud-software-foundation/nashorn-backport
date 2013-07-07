@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,61 +25,46 @@
 
 package jdk.nashorn.internal.ir;
 
+import jdk.nashorn.internal.ir.annotations.Immutable;
 import jdk.nashorn.internal.ir.visitor.NodeVisitor;
-import jdk.nashorn.internal.runtime.Source;
 
 /**
  * IR representation for executing bare expressions. Basically, an expression
  * node means "this code will be executed" and evaluating it results in
  * statements being added to the IR
  */
-public class ExecuteNode extends Node {
+@Immutable
+public final class ExecuteNode extends Statement {
     /** Expression to execute. */
-    private Node expression;
+    private final Node expression;
 
     /**
      * Constructor
      *
-     * @param source     the source
+     * @param lineNumber line number
      * @param token      token
      * @param finish     finish
      * @param expression the expression to execute
      */
-    public ExecuteNode(final Source source, final long token, final int finish, final Node expression) {
-        super(source, token, finish);
-
+    public ExecuteNode(final int lineNumber, final long token, final int finish, final Node expression) {
+        super(lineNumber, token, finish);
         this.expression = expression;
     }
 
-    private ExecuteNode(final ExecuteNode executeNode, final CopyState cs) {
+    private ExecuteNode(final ExecuteNode executeNode, final Node expression) {
         super(executeNode);
-
-        expression = cs.existingOrCopy(executeNode.expression);
+        this.expression = expression;
     }
 
     @Override
-    protected Node copy(final CopyState cs) {
-        return new ExecuteNode(this, cs);
+    public boolean isTerminal() {
+        return expression.isTerminal();
     }
 
     @Override
-    public boolean equals(final Object other) {
-        if (!super.equals(other)) {
-            return false;
-        }
-        return expression.equals(((ExecuteNode)other).getExpression());
-    }
-
-    @Override
-    public int hashCode() {
-        return super.hashCode() ^ expression.hashCode();
-    }
-
-    @Override
-    public Node accept(final NodeVisitor visitor) {
-        if (visitor.enter(this) != null) {
-            setExpression(expression.accept(visitor));
-            return visitor.leave(this);
+    public Node accept(final NodeVisitor<? extends LexicalContext> visitor) {
+        if (visitor.enterExecuteNode(this)) {
+            return visitor.leaveExecuteNode(setExpression(expression.accept(visitor)));
         }
 
         return this;
@@ -101,8 +86,12 @@ public class ExecuteNode extends Node {
     /**
      * Reset the expression to be executed
      * @param expression the expression
+     * @return new or same execute node
      */
-    public void setExpression(final Node expression) {
-        this.expression = expression;
+    public ExecuteNode setExpression(final Node expression) {
+        if (this.expression == expression) {
+            return this;
+        }
+        return new ExecuteNode(this, expression);
     }
 }

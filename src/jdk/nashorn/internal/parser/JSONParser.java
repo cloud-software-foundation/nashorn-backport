@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -54,10 +54,9 @@ public class JSONParser extends AbstractParser {
      * Constructor
      * @param source  the source
      * @param errors  the error manager
-     * @param strict  are we in strict mode
      */
-    public JSONParser(final Source source, final ErrorManager errors, final boolean strict) {
-        super(source, errors, strict);
+    public JSONParser(final Source source, final ErrorManager errors) {
+        super(source, errors, false);
     }
 
     /**
@@ -135,6 +134,7 @@ public class JSONParser extends AbstractParser {
                 return ch == '\"';
             }
 
+            // ECMA 15.12.1.1 The JSON Lexical Grammar - JSONWhiteSpace
             @Override
             protected boolean isWhitespace(final char ch) {
                 return Lexer.isJsonWhitespace(ch);
@@ -143,6 +143,99 @@ public class JSONParser extends AbstractParser {
             @Override
             protected boolean isEOL(final char ch) {
                 return Lexer.isJsonEOL(ch);
+            }
+
+            // ECMA 15.12.1.1 The JSON Lexical Grammar - JSONNumber
+            @Override
+            protected void scanNumber() {
+                // Record beginning of number.
+                final int startPosition = position;
+                // Assume value is a decimal.
+                TokenType valueType = TokenType.DECIMAL;
+
+                // floating point can't start with a "." with no leading digit before
+                if (ch0 == '.') {
+                    error(Lexer.message("json.invalid.number"), STRING, position, limit);
+                }
+
+                // First digit of number.
+                int digit = convertDigit(ch0, 10);
+
+                // skip first digit
+                skip(1);
+
+                if (digit != 0) {
+                    // Skip over remaining digits.
+                    while (convertDigit(ch0, 10) != -1) {
+                        skip(1);
+                    }
+                }
+
+                if (ch0 == '.' || ch0 == 'E' || ch0 == 'e') {
+                    // Must be a double.
+                    if (ch0 == '.') {
+                        // Skip period.
+                        skip(1);
+
+                        boolean mantissa = false;
+                        // Skip mantissa.
+                        while (convertDigit(ch0, 10) != -1) {
+                            mantissa = true;
+                            skip(1);
+                        }
+
+                        if (! mantissa) {
+                            // no digit after "."
+                            error(Lexer.message("json.invalid.number"), STRING, position, limit);
+                        }
+                    }
+
+                    // Detect exponent.
+                    if (ch0 == 'E' || ch0 == 'e') {
+                        // Skip E.
+                        skip(1);
+                        // Detect and skip exponent sign.
+                        if (ch0 == '+' || ch0 == '-') {
+                            skip(1);
+                        }
+                        boolean exponent = false;
+                        // Skip exponent.
+                        while (convertDigit(ch0, 10) != -1) {
+                            exponent = true;
+                            skip(1);
+                        }
+
+                        if (! exponent) {
+                            // no digit after "E"
+                            error(Lexer.message("json.invalid.number"), STRING, position, limit);
+                        }
+                    }
+
+                    valueType = TokenType.FLOATING;
+                }
+
+                // Add number token.
+                add(valueType, startPosition);
+            }
+
+            // ECMA 15.12.1.1 The JSON Lexical Grammar - JSONEscapeCharacter
+            @Override
+            protected boolean isEscapeCharacter(final char ch) {
+                switch (ch) {
+                    case '"':
+                    case '/':
+                    case '\\':
+                    case 'b':
+                    case 'f':
+                    case 'n':
+                    case 'r':
+                    case 't':
+                    // could be unicode escape
+                    case 'u':
+                        return true;
+                    default:
+                        return false;
+                }
             }
         };
 
@@ -170,8 +263,7 @@ public class JSONParser extends AbstractParser {
                 }
             case '"':
             case '\\':
-                error(AbstractParser.message("unexpected.token", str));
-                break;
+                throw error(AbstractParser.message("unexpected.token", str));
             }
         }
 
@@ -194,13 +286,13 @@ public class JSONParser extends AbstractParser {
             return getLiteral();
         case FALSE:
             next();
-            return LiteralNode.newInstance(source, literalToken, finish, false);
+            return LiteralNode.newInstance(literalToken, finish, false);
         case TRUE:
             next();
-            return LiteralNode.newInstance(source, literalToken, finish, true);
+            return LiteralNode.newInstance(literalToken, finish, true);
         case NULL:
             next();
-            return LiteralNode.newInstance(source, literalToken, finish);
+            return LiteralNode.newInstance(literalToken, finish);
         case LBRACKET:
             return arrayLiteral();
         case LBRACE:
@@ -219,17 +311,15 @@ public class JSONParser extends AbstractParser {
 
             if (value instanceof Number) {
                 next();
-                return new UnaryNode(source, literalToken, LiteralNode.newInstance(source, realToken, finish, (Number)value));
+                return new UnaryNode(literalToken, LiteralNode.newInstance(realToken, finish, (Number)value));
             }
 
-            error(AbstractParser.message("expected", "number", type.getNameOrType()));
-            break;
+            throw error(AbstractParser.message("expected", "number", type.getNameOrType()));
         default:
             break;
         }
 
-        error(AbstractParser.message("expected", "json literal", type.getNameOrType()));
-        return null;
+        throw error(AbstractParser.message("expected", "json literal", type.getNameOrType()));
     }
 
     /**
@@ -253,7 +343,7 @@ loop:
             switch (type) {
             case RBRACKET:
                 next();
-                result = LiteralNode.newInstance(source, arrayToken, finish, elements);
+                result = LiteralNode.newInstance(arrayToken, finish, elements);
                 break loop;
 
             case COMMARIGHT:
@@ -265,7 +355,7 @@ loop:
                 elements.add(jsonLiteral());
                 // Comma between array elements is mandatory in JSON.
                 if (type != COMMARIGHT && type != RBRACKET) {
-                    error(AbstractParser.message("expected", ", or ]", type.getNameOrType()));
+                   throw error(AbstractParser.message("expected", ", or ]", type.getNameOrType()));
                 }
                 break;
             }
@@ -285,7 +375,7 @@ loop:
         next();
 
         // Prepare to accumulate elements.
-        final List<Node> elements = new ArrayList<>();
+        final List<PropertyNode> elements = new ArrayList<>();
 
         // Create a block for the object literal.
 loop:
@@ -301,26 +391,26 @@ loop:
 
             default:
                 // Get and add the next property.
-                final Node property = propertyAssignment();
+                final PropertyNode property = propertyAssignment();
                 elements.add(property);
 
                 // Comma between property assigments is mandatory in JSON.
                 if (type != RBRACE && type != COMMARIGHT) {
-                    error(AbstractParser.message("expected", ", or }", type.getNameOrType()));
+                    throw error(AbstractParser.message("expected", ", or }", type.getNameOrType()));
                 }
                 break;
             }
         }
 
         // Construct new object literal.
-        return new ObjectNode(source, objectToken, finish, null, elements);
+        return new ObjectNode(objectToken, finish, elements);
     }
 
     /**
      * Parse a property assignment from the token stream
      * @return the property assignment as a Node
      */
-    private Node propertyAssignment() {
+    private PropertyNode propertyAssignment() {
         // Capture firstToken.
         final long propertyToken = token;
         LiteralNode<?> name = null;
@@ -334,13 +424,11 @@ loop:
         if (name != null) {
             expect(COLON);
             final Node value = jsonLiteral();
-            return new PropertyNode(source, propertyToken, value.getFinish(), name, value);
+            return new PropertyNode(propertyToken, value.getFinish(), name, value, null, null);
         }
 
         // Raise an error.
-        error(AbstractParser.message("expected", "string", type.getNameOrType()));
-
-        return null;
+        throw error(AbstractParser.message("expected", "string", type.getNameOrType()));
     }
 
 }

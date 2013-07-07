@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,7 @@
 package jdk.nashorn.internal.runtime.arrays;
 
 import java.util.Iterator;
-import jdk.nashorn.internal.runtime.Context;
+import jdk.nashorn.api.scripting.ScriptObjectMirror;
 import jdk.nashorn.internal.runtime.JSType;
 import jdk.nashorn.internal.runtime.ScriptObject;
 
@@ -39,7 +39,7 @@ import jdk.nashorn.internal.runtime.ScriptObject;
 abstract public class ArrayLikeIterator<T> implements Iterator<T> {
 
     /** current element index in iteration */
-    protected int index;
+    protected long index;
 
     /** should undefined elements be included in the iteration? */
     protected final boolean includeUndefined;
@@ -58,7 +58,6 @@ abstract public class ArrayLikeIterator<T> implements Iterator<T> {
      * Is this a reverse order iteration?
      * @return true if reverse
      */
-    @SuppressWarnings("static-method")
     public boolean isReverse() {
         return false;
     }
@@ -67,7 +66,7 @@ abstract public class ArrayLikeIterator<T> implements Iterator<T> {
      * Go the the next valid element index of the iterator
      * @return next index
      */
-    protected int bumpIndex() {
+    protected long bumpIndex() {
         return index++;
     }
 
@@ -75,7 +74,7 @@ abstract public class ArrayLikeIterator<T> implements Iterator<T> {
      * Return the next valid element index of the iterator
      * @return next index
      */
-    public int nextIndex() {
+    public long nextIndex() {
         return index;
     }
 
@@ -88,7 +87,7 @@ abstract public class ArrayLikeIterator<T> implements Iterator<T> {
      * Get the length of the iteration
      * @return length
      */
-    public abstract int getLength();
+    public abstract long getLength();
 
     /**
      * ArrayLikeIterator factory
@@ -122,9 +121,13 @@ abstract public class ArrayLikeIterator<T> implements Iterator<T> {
             return new ArrayIterator((ScriptObject) obj, includeUndefined);
         }
 
-        obj = JSType.toObject(Context.getGlobal(), obj);
+        obj = JSType.toScriptObject(obj);
         if (obj instanceof ScriptObject) {
             return new MapIterator((ScriptObject)obj, includeUndefined);
+        }
+
+        if (obj instanceof ScriptObjectMirror) {
+            return new ScriptObjectMirrorIterator((ScriptObjectMirror)obj, includeUndefined);
         }
 
         return new EmptyArrayLikeIterator();
@@ -143,9 +146,13 @@ abstract public class ArrayLikeIterator<T> implements Iterator<T> {
             return new ReverseArrayIterator((ScriptObject) obj, includeUndefined);
         }
 
-        obj = JSType.toObject(Context.getGlobal(), obj);
+        obj = JSType.toScriptObject(obj);
         if (obj instanceof ScriptObject) {
             return new ReverseMapIterator((ScriptObject)obj, includeUndefined);
+        }
+
+        if (obj instanceof ScriptObjectMirror) {
+            return new ReverseScriptObjectMirrorIterator((ScriptObjectMirror)obj, includeUndefined);
         }
 
         assert !obj.getClass().isArray();
