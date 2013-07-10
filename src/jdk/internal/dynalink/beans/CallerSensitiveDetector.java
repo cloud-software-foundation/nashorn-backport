@@ -85,6 +85,7 @@ package jdk.internal.dynalink.beans;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AccessibleObject;
+import java.lang.reflect.Method;
 
 /**
  * Utility class that determines if a method or constructor is caller sensitive. It actually encapsulates two different
@@ -125,6 +126,18 @@ public class CallerSensitiveDetector {
         boolean isCallerSensitive(AccessibleObject o) {
             for(Annotation a: o.getAnnotations()) {
                 if(String.valueOf(a).equals(CALLER_SENSITIVE_ANNOTATION_STRING)) {
+                    return true;
+                }
+            }
+            if (o instanceof Method) {
+                // JDK7 hack
+                Method method = (Method) o;
+                final String className = method.getDeclaringClass().getName();
+                final String methodName = method.getName();
+                if (className.equals("java.security.AccessController") && methodName.equals("doPrivileged")) {
+                    return true;
+                }
+                if (className.equals("java.lang.Class") && methodName.equals("forName")) {
                     return true;
                 }
             }

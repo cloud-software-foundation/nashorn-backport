@@ -115,8 +115,15 @@ class JavaAdapterClassLoader extends JavaAdapterGeneratorBase {
     // security tradeoff...
     private ClassLoader createClassLoader(final ClassLoader parentLoader) {
         return new AdapterLoader(parentLoader) {
-            private final ClassLoader myLoader = getClass().getClassLoader();
+            private final ClassLoader myLoader;
             private final ProtectionDomain myProtectionDomain = getClass().getProtectionDomain();
+
+            {
+                ClassLoader delegate = getClass().getClassLoader();
+                if (delegate == null)
+                    delegate = ClassLoader.getSystemClassLoader();
+                myLoader = delegate;
+            }
 
             @Override
             public Class<?> loadClass(final String name, final boolean resolve) throws ClassNotFoundException {
@@ -128,7 +135,9 @@ class JavaAdapterClassLoader extends JavaAdapterGeneratorBase {
                     // SecurityException for nashorn's classes!. For adapter's to work, we
                     // should be able to refer to nashorn classes.
                     if (name.startsWith("jdk.nashorn.internal.")) {
-                        return myLoader.loadClass(name);
+                        LoadClassAction action = new LoadClassAction(myLoader, name);
+                        AccessController.doPrivileged(action);
+                        return action.getResult();
                     }
                     throw se;
                 }
@@ -146,6 +155,35 @@ class JavaAdapterClassLoader extends JavaAdapterGeneratorBase {
                 }
             }
         };
+    }
+
+    private static class LoadClassAction implements PrivilegedAction<Void>
+    {
+        private final ClassLoader loader;
+        private final String className;
+        private ClassNotFoundException failure;
+        private Class<?> result;
+
+        private LoadClassAction(ClassLoader loader, String className) {
+            this.loader = loader;
+            this.className = className;
+        }
+
+        @Override
+        public Void run() {
+            try {
+                result = loader.loadClass(className);
+            } catch (ClassNotFoundException e) {
+                failure = e;
+            }
+            return null;
+        }
+
+        public Class<?> getResult() throws ClassNotFoundException {
+            if (failure != null)
+                throw failure;
+            return result;
+        }
     }
 
     private static ProtectionDomain createGeneratedProtectionDomain() {
