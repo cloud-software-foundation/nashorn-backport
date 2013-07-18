@@ -36,6 +36,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
+import java.util.concurrent.atomic.AtomicLong;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.security.AccessControlContext;
@@ -95,6 +96,11 @@ public final class Context {
         @Override
         public void verify(final byte[] code) {
             context.verify(code);
+        }
+
+        @Override
+        public long getUniqueScriptId() {
+            return context.getUniqueScriptId();
         }
     }
 
@@ -197,8 +203,12 @@ public final class Context {
     /** Current error manager. */
     private final ErrorManager errors;
 
+    /** Unique id for script. Used only when --loader-per-compile=false */
+    private final AtomicLong uniqueScriptId;
+
     private static final ClassLoader myLoader = Context.class.getClassLoader();
     private static final StructureLoader sharedLoader;
+    private static final AccessControlContext NO_PERMISSIONS_CONTEXT;
 
     static {
         sharedLoader = AccessController.doPrivileged(new PrivilegedAction<StructureLoader>() {
@@ -207,6 +217,7 @@ public final class Context {
                 return new StructureLoader(myLoader, null);
             }
         });
+        NO_PERMISSIONS_CONTEXT = new AccessControlContext(new ProtectionDomain[] { new ProtectionDomain(null, new Permissions()) });
     }
 
     /**
@@ -253,13 +264,13 @@ public final class Context {
         this.env       = new ScriptEnvironment(options, out, err);
         this._strict   = env._strict;
         this.appLoader = appLoader;
-        this.scriptLoader = (ScriptLoader)AccessController.doPrivileged(
-             new PrivilegedAction<ClassLoader>() {
-                @Override
-                public ClassLoader run() {
-                    return new ScriptLoader(sharedLoader, Context.this);
-                }
-             });
+        if (env._loader_per_compile) {
+            this.scriptLoader = null;
+            this.uniqueScriptId = null;
+        } else {
+            this.scriptLoader = createNewLoader();
+            this.uniqueScriptId = new AtomicLong();
+        }
         this.errors    = errors;
 
         // if user passed -classpath option, make a class loader with that and set it as
@@ -570,7 +581,7 @@ public final class Context {
                         sm.checkPackageAccess(fullName.substring(0, index));
                         return null;
                     }
-                }, createNoPermissionsContext());
+                }, NO_PERMISSIONS_CONTEXT);
             }
         }
 
@@ -713,10 +724,6 @@ public final class Context {
         return (context != null) ? context : Context.getContextTrusted();
     }
 
-    private static AccessControlContext createNoPermissionsContext() {
-        return new AccessControlContext(new ProtectionDomain[] { new ProtectionDomain(null, new Permissions()) });
-    }
-
     private Object evaluateSource(final Source source, final ScriptObject scope, final ScriptObject thiz) {
         ScriptFunction script = null;
 
@@ -823,5 +830,9 @@ public final class Context {
 
     private ScriptObject newGlobalTrusted() {
         return new Global(this);
+    }
+
+    private long getUniqueScriptId() {
+        return uniqueScriptId.getAndIncrement();
     }
 }

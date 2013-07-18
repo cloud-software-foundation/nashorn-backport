@@ -107,6 +107,20 @@ public class AccessorProperty extends Property {
         SPILL_ELEMENT_SETTER = MH.filterArguments(MH.arrayElementSetter(Object[].class), 0, spillGetter);
     }
 
+    /**
+     * Create a new accessor property. Factory method used by nasgen generated code.
+     *
+     * @param key           {@link Property} key.
+     * @param propertyFlags {@link Property} flags.
+     * @param getter        {@link Property} get accessor method.
+     * @param setter        {@link Property} set accessor method.
+     *
+     * @return  New {@link AccessorProperty} created.
+     */
+    public static AccessorProperty create(final String key, final int propertyFlags, final MethodHandle getter, final MethodHandle setter) {
+        return new AccessorProperty(key, propertyFlags, -1, getter, setter);
+    }
+
     /** Seed getter for the primitive version of this field (in -Dnashorn.fields.dual=true mode) */
     private MethodHandle primitiveGetter;
 
@@ -133,9 +147,9 @@ public class AccessorProperty extends Property {
      * and are thus rebound with that as receiver
      *
      * @param property  accessor property to rebind
-     * @param delegate  delegate script object to rebind receiver to
+     * @param delegate  delegate object to rebind receiver to
      */
-    public AccessorProperty(final AccessorProperty property, final ScriptObject delegate) {
+    public AccessorProperty(final AccessorProperty property, final Object delegate) {
         super(property);
 
         this.primitiveGetter = bindTo(property.primitiveGetter, delegate);
@@ -234,11 +248,10 @@ public class AccessorProperty extends Property {
         primitiveSetter = null;
 
         if (isParameter() && hasArguments()) {
-            final MethodHandle arguments   = MH.getter(lookup, structure, "arguments", Object.class);
-            final MethodHandle argumentsSO = MH.asType(arguments, arguments.type().changeReturnType(ScriptObject.class));
+            final MethodHandle arguments   = MH.getter(lookup, structure, "arguments", ScriptObject.class);
 
-            objectGetter = MH.asType(MH.insertArguments(MH.filterArguments(ScriptObject.GET_ARGUMENT.methodHandle(), 0, argumentsSO), 1, slot), Lookup.GET_OBJECT_TYPE);
-            objectSetter = MH.asType(MH.insertArguments(MH.filterArguments(ScriptObject.SET_ARGUMENT.methodHandle(), 0, argumentsSO), 1, slot), Lookup.SET_OBJECT_TYPE);
+            objectGetter = MH.asType(MH.insertArguments(MH.filterArguments(ScriptObject.GET_ARGUMENT.methodHandle(), 0, arguments), 1, slot), Lookup.GET_OBJECT_TYPE);
+            objectSetter = MH.asType(MH.insertArguments(MH.filterArguments(ScriptObject.SET_ARGUMENT.methodHandle(), 0, arguments), 1, slot), Lookup.SET_OBJECT_TYPE);
         } else {
             final GettersSetters gs = GETTERS_SETTERS.get(structure);
             objectGetter = gs.getters[slot];

@@ -203,9 +203,19 @@ public abstract class ScriptObject extends PropertyListenerManager implements Pr
      * @param source The source object to copy from.
      */
     public void addBoundProperties(final ScriptObject source) {
+        addBoundProperties(source, source.getMap().getProperties());
+    }
+
+    /**
+     * Copy all properties from the array with their receiver bound to the source.
+     *
+     * @param source The source object to copy from.
+     * @param properties The array of properties to copy.
+     */
+    public void addBoundProperties(final ScriptObject source, final Property[] properties) {
         PropertyMap newMap = this.getMap();
 
-        for (final Property property : source.getMap().getProperties()) {
+        for (final Property property : properties) {
             final String key = property.getKey();
 
             if (newMap.findProperty(key) == null) {
@@ -213,8 +223,28 @@ public abstract class ScriptObject extends PropertyListenerManager implements Pr
                     final UserAccessorProperty prop = this.newUserAccessors(key, property.getFlags(), property.getGetterFunction(source), property.getSetterFunction(source));
                     newMap = newMap.addProperty(prop);
                 } else {
-                    newMap = newMap.newPropertyBind((AccessorProperty)property, source);
+                    newMap = newMap.addPropertyBind((AccessorProperty)property, source);
                 }
+            }
+        }
+
+        this.setMap(newMap);
+    }
+
+    /**
+     * Copy all properties from the array with their receiver bound to the source.
+     *
+     * @param source The source object to copy from.
+     * @param properties The collection of accessor properties to copy.
+     */
+    public void addBoundProperties(final Object source, final AccessorProperty[] properties) {
+        PropertyMap newMap = this.getMap();
+
+        for (final AccessorProperty property : properties) {
+            final String key = property.getKey();
+
+            if (newMap.findProperty(key) == null) {
+                newMap = newMap.addPropertyBind(property, source);
             }
         }
 
