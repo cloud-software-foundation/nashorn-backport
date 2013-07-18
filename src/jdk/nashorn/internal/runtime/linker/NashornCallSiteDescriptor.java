@@ -28,7 +28,6 @@ package jdk.nashorn.internal.runtime.linker;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodHandles.Lookup;
 import java.lang.invoke.MethodType;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import jdk.internal.dynalink.CallSiteDescriptor;
