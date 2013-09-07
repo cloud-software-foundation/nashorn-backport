@@ -45,18 +45,18 @@ import static jdk.nashorn.internal.runtime.linker.AdaptationResult.Outcome.ERROR
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodType;
+import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.security.AccessControlContext;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
-import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Random;
 import java.util.Set;
 import jdk.internal.org.objectweb.asm.ClassWriter;
 import jdk.internal.org.objectweb.asm.Label;
@@ -66,6 +66,7 @@ import jdk.internal.org.objectweb.asm.commons.InstructionAdapter;
 import jdk.nashorn.internal.runtime.Context;
 import jdk.nashorn.internal.runtime.ScriptFunction;
 import jdk.nashorn.internal.runtime.ScriptObject;
+import sun.reflect.CallerSensitive;
 
 /**
  * Generates bytecode for a Java adapter class. Used by the {@link JavaAdapterFactory}.
@@ -121,7 +122,23 @@ import jdk.nashorn.internal.runtime.ScriptObject;
  * constructor's trailing position and thus provide further instance-specific overrides. The order of invocation is
  * always instance-specified method, then a class-specified method, and finally the superclass method.
  */
-final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
+final class JavaAdapterBytecodeGenerator {
+    static final Type CONTEXT_TYPE       = Type.getType(Context.class);
+    static final Type OBJECT_TYPE        = Type.getType(Object.class);
+    static final Type SCRIPT_OBJECT_TYPE = Type.getType(ScriptObject.class);
+
+    static final String CONTEXT_TYPE_NAME = CONTEXT_TYPE.getInternalName();
+    static final String OBJECT_TYPE_NAME  = OBJECT_TYPE.getInternalName();
+
+    static final String INIT = "<init>";
+
+    static final String GLOBAL_FIELD_NAME = "global";
+
+    static final String SCRIPT_OBJECT_TYPE_DESCRIPTOR = SCRIPT_OBJECT_TYPE.getDescriptor();
+
+    static final String SET_GLOBAL_METHOD_DESCRIPTOR = Type.getMethodDescriptor(Type.VOID_TYPE, SCRIPT_OBJECT_TYPE);
+    static final String VOID_NOARG_METHOD_DESCRIPTOR = Type.getMethodDescriptor(Type.VOID_TYPE);
+
     private static final Type SCRIPT_FUNCTION_TYPE = Type.getType(ScriptFunction.class);
     private static final Type STRING_TYPE = Type.getType(String.class);
     private static final Type METHOD_TYPE_TYPE = Type.getType(MethodType.class);
@@ -147,21 +164,22 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
 
     // Package used when the adapter can't be defined in the adaptee's package (either because it's sealed, or because
     // it's a java.* package.
-    private static final String ADAPTER_PACKAGE_PREFIX = "jdk/nashorn/internal/javaadapters/";
+    private static final String ADAPTER_PACKAGE_PREFIX = "jdk/nashorn/javaadapters/";
     // Class name suffix used to append to the adaptee class name, when it can be defined in the adaptee's package.
     private static final String ADAPTER_CLASS_NAME_SUFFIX = "$$NashornJavaAdapter";
     private static final String JAVA_PACKAGE_PREFIX = "java/";
-    private static final int MAX_GENERATED_TYPE_NAME_LENGTH = 238; //255 - 17; 17 is the maximum possible length for the global setter inner class suffix
+    private static final int MAX_GENERATED_TYPE_NAME_LENGTH = 255;
 
     private static final String CLASS_INIT = "<clinit>";
     private static final String STATIC_GLOBAL_FIELD_NAME = "staticGlobal";
+
+    // Method name prefix for invoking super-methods
+    static final String SUPER_PREFIX = "super$";
 
     /**
      * Collection of methods we never override: Object.clone(), Object.finalize().
      */
     private static final Collection<MethodInfo> EXCLUDED = getExcludedMethods();
-
-    private static final Random random = new SecureRandom();
 
     // This is the superclass for our generated adapter.
     private final Class<?> superClass;
@@ -175,8 +193,6 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
     private final String superClassName;
     // Binary name of the generated class.
     private final String generatedClassName;
-    // Binary name of the PrivilegedAction inner class that is used to
-    private final String globalSetterClassName;
     private final Set<String> usedFieldNames = new HashSet<>();
     private final Set<String> abstractMethodNames = new HashSet<>();
     private final String samName;
@@ -214,15 +230,6 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
         superClassName = Type.getInternalName(superClass);
         generatedClassName = getGeneratedClassName(superClass, interfaces);
 
-        // Randomize the name of the privileged global setter, to make it non-feasible to find.
-        final long l;
-        synchronized(random) {
-            l = random.nextLong();
-        }
-
-        // NOTE: they way this class name is calculated affects the value of MAX_GENERATED_TYPE_NAME_LENGTH constant. If
-        // you change the calculation of globalSetterClassName, adjust the constant too.
-        globalSetterClassName = generatedClassName.concat("$" + Long.toHexString(l & Long.MAX_VALUE));
         cw.visit(Opcodes.V1_7, ACC_PUBLIC | ACC_SUPER | ACC_FINAL, generatedClassName, null, superClassName, getInternalTypeNames(interfaces));
 
         generateGlobalFields();
@@ -236,6 +243,7 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
         }
         generateConstructors();
         generateMethods();
+        generateSuperMethods();
         // }
         cw.visitEnd();
     }
@@ -250,7 +258,7 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
     }
 
     JavaAdapterClassLoader createAdapterClassLoader() {
-        return new JavaAdapterClassLoader(generatedClassName, cw.toByteArray(), globalSetterClassName);
+        return new JavaAdapterClassLoader(generatedClassName, cw.toByteArray());
     }
 
     boolean isAutoConvertibleFromFunction() {
@@ -367,7 +375,7 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
         boolean gotCtor = false;
         for (final Constructor<?> ctor: superClass.getDeclaredConstructors()) {
             final int modifier = ctor.getModifiers();
-            if((modifier & (Modifier.PUBLIC | Modifier.PROTECTED)) != 0) {
+            if((modifier & (Modifier.PUBLIC | Modifier.PROTECTED)) != 0 && !isCallerSensitive(ctor)) {
                 generateConstructors(ctor);
                 gotCtor = true;
             }
@@ -503,6 +511,10 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
 
     private static void endInitMethod(final InstructionAdapter mv) {
         mv.visitInsn(RETURN);
+        endMethod(mv);
+    }
+
+    private static void endMethod(final InstructionAdapter mv) {
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
@@ -511,8 +523,8 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
         mv.invokestatic(CONTEXT_TYPE_NAME, "getGlobal", GET_GLOBAL_METHOD_DESCRIPTOR);
     }
 
-    private void invokeSetGlobal(final InstructionAdapter mv) {
-        mv.invokestatic(globalSetterClassName, "setGlobal", SET_GLOBAL_METHOD_DESCRIPTOR);
+    private static void invokeSetGlobal(final InstructionAdapter mv) {
+        mv.invokestatic(CONTEXT_TYPE_NAME, "setGlobal", SET_GLOBAL_METHOD_DESCRIPTOR);
     }
 
     /**
@@ -599,13 +611,8 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
      */
     private void generateMethod(final MethodInfo mi) {
         final Method method = mi.method;
-        final int mod = method.getModifiers();
-        final int access = ACC_PUBLIC | (method.isVarArgs() ? ACC_VARARGS : 0);
         final Class<?>[] exceptions = method.getExceptionTypes();
-        final String[] exceptionNames = new String[exceptions.length];
-        for (int i = 0; i < exceptions.length; ++i) {
-            exceptionNames[i] = Type.getInternalName(exceptions[i]);
-        }
+        final String[] exceptionNames = getExceptionNames(exceptions);
         final MethodType type = mi.type;
         final String methodDesc = type.toMethodDescriptorString();
         final String name = mi.getName();
@@ -613,14 +620,8 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
         final Type asmType = Type.getMethodType(methodDesc);
         final Type[] asmArgTypes = asmType.getArgumentTypes();
 
-        // Determine the first index for a local variable
-        int nextLocalVar = 1; // this
-        for(final Type t: asmArgTypes) {
-            nextLocalVar += t.getSize();
-        }
-
-        final InstructionAdapter mv = new InstructionAdapter(cw.visitMethod(access, name, methodDesc, null,
-                exceptionNames));
+        final InstructionAdapter mv = new InstructionAdapter(cw.visitMethod(getAccessModifiers(method), name,
+                methodDesc, null, exceptionNames));
         mv.visitCode();
 
         final Label instanceHandleDefined = new Label();
@@ -642,7 +643,7 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
         }
 
         // No handle is available, fall back to default behavior
-        if(Modifier.isAbstract(mod)) {
+        if(Modifier.isAbstract(method.getModifiers())) {
             // If the super method is abstract, throw an exception
             mv.anew(UNSUPPORTED_OPERATION_TYPE);
             mv.dup();
@@ -650,14 +651,7 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
             mv.athrow();
         } else {
             // If the super method is not abstract, delegate to it.
-            mv.visitVarInsn(ALOAD, 0);
-            int nextParam = 1;
-            for(final Type t: asmArgTypes) {
-                mv.load(nextParam, t);
-                nextParam += t.getSize();
-            }
-            mv.invokespecial(superClassName, name, methodDesc);
-            mv.areturn(asmReturnType);
+            emitSuperCall(mv, name, methodDesc);
         }
 
         final Label setupGlobal = new Label();
@@ -681,6 +675,12 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
         // stack: [creatingGlobal, someHandle]
         mv.visitLabel(setupGlobal);
 
+        // Determine the first index for a local variable
+        int nextLocalVar = 1; // "this" is at 0
+        for(final Type t: asmArgTypes) {
+            nextLocalVar += t.getSize();
+        }
+        // Set our local variable indices
         final int currentGlobalVar  = nextLocalVar++;
         final int globalsDifferVar  = nextLocalVar++;
 
@@ -771,8 +771,7 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
             }
             mv.visitTryCatchBlock(tryBlockStart, tryBlockEnd, throwableHandler, THROWABLE_TYPE_NAME);
         }
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
+        endMethod(mv);
     }
 
     /**
@@ -794,7 +793,7 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
      * entry.
      * @param globalsDifferVar index of the boolean local variable that is true if the global needs to be restored.
      */
-    private void emitFinally(final InstructionAdapter mv, final int currentGlobalVar, final int globalsDifferVar) {
+    private static void emitFinally(final InstructionAdapter mv, final int currentGlobalVar, final int globalsDifferVar) {
         // Emit code to restore the previous Nashorn global if needed
         mv.visitVarInsn(ILOAD, globalsDifferVar);
         final Label skip = new Label();
@@ -811,6 +810,53 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
             }
         }
         return false;
+    }
+
+    private void generateSuperMethods() {
+        for(final MethodInfo mi: methodInfos) {
+            if(!Modifier.isAbstract(mi.method.getModifiers())) {
+                generateSuperMethod(mi);
+            }
+        }
+    }
+
+    private void generateSuperMethod(MethodInfo mi) {
+        final Method method = mi.method;
+
+        final String methodDesc = mi.type.toMethodDescriptorString();
+        final String name = mi.getName();
+
+        final InstructionAdapter mv = new InstructionAdapter(cw.visitMethod(getAccessModifiers(method),
+                SUPER_PREFIX + name, methodDesc, null, getExceptionNames(method.getExceptionTypes())));
+        mv.visitCode();
+
+        emitSuperCall(mv, name, methodDesc);
+
+        endMethod(mv);
+    }
+
+    private void emitSuperCall(final InstructionAdapter mv, final String name, final String methodDesc) {
+        mv.visitVarInsn(ALOAD, 0);
+        int nextParam = 1;
+        final Type methodType = Type.getMethodType(methodDesc);
+        for(final Type t: methodType.getArgumentTypes()) {
+            mv.load(nextParam, t);
+            nextParam += t.getSize();
+        }
+        mv.invokespecial(superClassName, name, methodDesc);
+        mv.areturn(methodType.getReturnType());
+    }
+
+    private static String[] getExceptionNames(final Class<?>[] exceptions) {
+        final String[] exceptionNames = new String[exceptions.length];
+        for (int i = 0; i < exceptions.length; ++i) {
+            exceptionNames[i] = Type.getInternalName(exceptions[i]);
+        }
+        return exceptionNames;
+    }
+
+    private static int getAccessModifiers(final Method method) {
+        return ACC_PUBLIC | (method.isVarArgs() ? ACC_VARARGS : 0);
     }
 
     /**
@@ -832,7 +878,7 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
                 }
                 if (Modifier.isPublic(m) || Modifier.isProtected(m)) {
                     final MethodInfo mi = new MethodInfo(typeMethod);
-                    if (Modifier.isFinal(m)) {
+                    if (Modifier.isFinal(m) || isCallerSensitive(typeMethod)) {
                         finalMethods.add(mi);
                     } else if (!finalMethods.contains(mi) && methodInfos.add(mi)) {
                         if (Modifier.isAbstract(m)) {
@@ -865,6 +911,8 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
         }
     }
 
+    private static final AccessControlContext GET_DECLARED_MEMBERS_ACC_CTXT = ClassAndLoader.createPermAccCtxt("accessDeclaredMembers");
+
     /**
      * Creates a collection of methods that are not final, but we still never allow them to be overridden in adapters,
      * as explicitly declaring them automatically is a bad idea. Currently, this means {@code Object.finalize()} and
@@ -883,7 +931,7 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
                     throw new AssertionError(e);
                 }
             }
-        });
+        }, GET_DECLARED_MEMBERS_ACC_CTXT);
     }
 
     private String getCommonSuperClass(final String type1, final String type2) {
@@ -908,5 +956,9 @@ final class JavaAdapterBytecodeGenerator extends JavaAdapterGeneratorBase {
     private static Class<?> assignableSuperClass(final Class<?> c1, final Class<?> c2) {
         final Class<?> superClass = c1.getSuperclass();
         return superClass.isAssignableFrom(c2) ? superClass : assignableSuperClass(superClass, c2);
+    }
+
+    private static boolean isCallerSensitive(final AccessibleObject e) {
+        return e.isAnnotationPresent(CallerSensitive.class);
     }
 }

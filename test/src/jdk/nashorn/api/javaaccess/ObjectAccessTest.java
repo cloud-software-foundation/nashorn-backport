@@ -32,6 +32,7 @@ import javax.script.ScriptEngine;
 import javax.script.ScriptEngineManager;
 import javax.script.ScriptException;
 import org.testng.TestNG;
+import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
@@ -43,7 +44,7 @@ import org.testng.annotations.Test;
 public class ObjectAccessTest {
 
     private static ScriptEngine e = null;
-    private static SharedObject o = new SharedObject();
+    private static SharedObject o = null;
 
     public static void main(final String[] args) {
         TestNG.main(args);
@@ -53,9 +54,16 @@ public class ObjectAccessTest {
     public static void setUpClass() throws ScriptException {
         final ScriptEngineManager m = new ScriptEngineManager();
         e = m.getEngineByName("nashorn");
+        o = new SharedObject();
         e.put("o", o);
         e.eval("var SharedObject = Packages.jdk.nashorn.api.javaaccess.SharedObject;");
         e.eval("var Person = Packages.jdk.nashorn.api.javaaccess.Person;");
+    }
+
+    @AfterClass
+    public static void tearDownClass() {
+        e = null;
+        o = null;
     }
 
     @Test
@@ -72,7 +80,7 @@ public class ObjectAccessTest {
         e.eval("var p_object_array = o.publicObjectArray;");
         assertEquals(o.publicObjectArray[0], e.eval("o.publicObjectArray[0]"));
         assertArrayEquals(o.publicObjectArray, (Object[])e.get("p_object_array"));
-        e.eval("var t_object_arr = java.lang.reflect.Array.newInstance(Person.class, 3);" +
+        e.eval("var t_object_arr = new (Java.type(\"jdk.nashorn.api.javaaccess.Person[]\"))(3);" +
                 "t_object_arr[0] = new Person(100);" +
                 "t_object_arr[1] = new Person(120);" +
                 "t_object_arr[2] = new Person(140);" +
@@ -96,7 +104,7 @@ public class ObjectAccessTest {
         e.eval("var ps_object_array = SharedObject.publicStaticObjectArray;");
         assertEquals(SharedObject.publicStaticObjectArray[0], e.eval("SharedObject.publicStaticObjectArray[0]"));
         assertArrayEquals(SharedObject.publicStaticObjectArray, (Object[])e.get("ps_object_array"));
-        e.eval("var ts_object_arr = java.lang.reflect.Array.newInstance(Person.class, 3);" +
+        e.eval("var ts_object_arr = new (Java.type(\"jdk.nashorn.api.javaaccess.Person[]\"))(3);" +
                 "ts_object_arr[0] = new Person(100);" +
                 "ts_object_arr[1] = new Person(120);" +
                 "ts_object_arr[2] = new Person(140);" +
@@ -120,7 +128,7 @@ public class ObjectAccessTest {
         e.eval("var pf_object_array = o.publicFinalObjectArray;");
         assertEquals(o.publicFinalObjectArray[0], e.eval("o.publicFinalObjectArray[0]"));
         assertArrayEquals(o.publicFinalObjectArray, (Object[])e.get("pf_object_array"));
-        e.eval("var tf_object_arr = java.lang.reflect.Array.newInstance(Person.class, 3);" +
+        e.eval("var tf_object_arr = new (Java.type(\"jdk.nashorn.api.javaaccess.Person[]\"))(3);" +
                 "tf_object_arr[0] = new Person(100);" +
                 "tf_object_arr[1] = new Person(120);" +
                 "tf_object_arr[2] = new Person(140);" +
@@ -144,7 +152,7 @@ public class ObjectAccessTest {
         e.eval("var psf_object_array = SharedObject.publicStaticFinalObjectArray;");
         assertEquals(SharedObject.publicStaticFinalObjectArray[0], e.eval("SharedObject.publicStaticFinalObjectArray[0]"));
         assertArrayEquals(SharedObject.publicStaticFinalObjectArray, (Object[])e.get("psf_object_array"));
-        e.eval("var tsf_object_arr = java.lang.reflect.Array.newInstance(Person.class, 3);" +
+        e.eval("var tsf_object_arr = new (Java.type(\"jdk.nashorn.api.javaaccess.Person[]\"))(3);" +
                 "tsf_object_arr[0] = new Person(100);" +
                 "tsf_object_arr[1] = new Person(120);" +
                 "tsf_object_arr[2] = new Person(140);" +

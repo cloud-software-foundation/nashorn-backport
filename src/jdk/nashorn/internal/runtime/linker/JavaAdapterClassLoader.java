@@ -25,16 +25,7 @@
 
 package jdk.nashorn.internal.runtime.linker;
 
-import static jdk.internal.org.objectweb.asm.Opcodes.ACC_FINAL;
-import static jdk.internal.org.objectweb.asm.Opcodes.ACC_PRIVATE;
-import static jdk.internal.org.objectweb.asm.Opcodes.ACC_PUBLIC;
-import static jdk.internal.org.objectweb.asm.Opcodes.ACC_STATIC;
-import static jdk.internal.org.objectweb.asm.Opcodes.ACC_SUPER;
-import static jdk.internal.org.objectweb.asm.Opcodes.ACONST_NULL;
-import static jdk.internal.org.objectweb.asm.Opcodes.ALOAD;
-import static jdk.internal.org.objectweb.asm.Opcodes.ARETURN;
-import static jdk.internal.org.objectweb.asm.Opcodes.RETURN;
-
+import java.security.AccessControlContext;
 import java.security.AccessController;
 import java.security.AllPermission;
 import java.security.CodeSigner;
@@ -43,14 +34,7 @@ import java.security.Permissions;
 import java.security.PrivilegedAction;
 import java.security.ProtectionDomain;
 import java.security.SecureClassLoader;
-
 import jdk.internal.dynalink.beans.StaticClass;
-import jdk.internal.org.objectweb.asm.ClassWriter;
-import jdk.internal.org.objectweb.asm.Opcodes;
-import jdk.internal.org.objectweb.asm.Type;
-import jdk.internal.org.objectweb.asm.commons.InstructionAdapter;
-import jdk.nashorn.internal.runtime.Context;
-import jdk.nashorn.internal.runtime.ScriptObject;
 
 /**
  * This class encapsulates the bytecode of the adapter class and can be used to load it into the JVM as an actual Class.
@@ -60,22 +44,23 @@ import jdk.nashorn.internal.runtime.ScriptObject;
  * class are normally created by {@link JavaAdapterBytecodeGenerator}.
  */
 @SuppressWarnings("javadoc")
-class JavaAdapterClassLoader extends JavaAdapterGeneratorBase {
-    private static final Type PRIVILEGED_ACTION_TYPE = Type.getType(PrivilegedAction.class);
-
-    private static final String PRIVILEGED_ACTION_TYPE_NAME = PRIVILEGED_ACTION_TYPE.getInternalName();
-    private static final String PRIVILEGED_RUN_METHOD_DESCRIPTOR = Type.getMethodDescriptor(OBJECT_TYPE);
-
+final class JavaAdapterClassLoader {
     private static final ProtectionDomain GENERATED_PROTECTION_DOMAIN = createGeneratedProtectionDomain();
+    private static final AccessControlContext CREATE_LOADER_ACC_CTXT = ClassAndLoader.createPermAccCtxt("createClassLoader");
 
     private final String className;
-    private final byte[] classBytes;
-    private final String globalSetterClassName;
+    private volatile byte[] classBytes;
 
-    JavaAdapterClassLoader(String className, byte[] classBytes, String globalSetterClassName) {
+    JavaAdapterClassLoader(String className, byte[] classBytes) {
         this.className = className.replace('/', '.');
         this.classBytes = classBytes;
-        this.globalSetterClassName = globalSetterClassName.replace('/', '.');
+    }
+
+    /**
+     * clear classBytes after loading class.
+     */
+    void clearClassBytes() {
+       this.classBytes = null;
     }
 
     /**
@@ -93,17 +78,7 @@ class JavaAdapterClassLoader extends JavaAdapterGeneratorBase {
                     throw new AssertionError(e); // cannot happen
                 }
             }
-        });
-    }
-
-    private static class AdapterLoader extends SecureClassLoader {
-        AdapterLoader(ClassLoader parent) {
-            super(parent);
-        }
-    }
-
-    static boolean isAdapterClass(Class<?> clazz) {
-        return clazz.getClassLoader() instanceof AdapterLoader;
+        }, CREATE_LOADER_ACC_CTXT);
     }
 
     // Note that the adapter class is created in the protection domain of the class/interface being
@@ -114,9 +89,8 @@ class JavaAdapterClassLoader extends JavaAdapterGeneratorBase {
     // with ability to introspect on the class and use setAccessible(true) on it could invoke the method. It's a
     // security tradeoff...
     private ClassLoader createClassLoader(final ClassLoader parentLoader) {
-        return new AdapterLoader(parentLoader) {
+        return new SecureClassLoader(parentLoader) {
             private final ClassLoader myLoader;
-            private final ProtectionDomain myProtectionDomain = getClass().getProtectionDomain();
 
             {
                 ClassLoader delegate = getClass().getClassLoader();
@@ -146,13 +120,10 @@ class JavaAdapterClassLoader extends JavaAdapterGeneratorBase {
             @Override
             protected Class<?> findClass(final String name) throws ClassNotFoundException {
                 if(name.equals(className)) {
+                    assert classBytes != null : "what? already cleared .class bytes!!";
                     return defineClass(name, classBytes, 0, classBytes.length, GENERATED_PROTECTION_DOMAIN);
-                } else if(name.equals(globalSetterClassName)) {
-                    final byte[] bytes = generatePrivilegedActionClassBytes(globalSetterClassName.replace('.', '/'));
-                    return defineClass(name, bytes, 0, bytes.length, myProtectionDomain);
-                } else {
-                    throw new ClassNotFoundException(name);
                 }
+                throw new ClassNotFoundException(name);
             }
         };
     }
@@ -195,71 +166,5 @@ class JavaAdapterClassLoader extends JavaAdapterGeneratorBase {
         final Permissions permissions = new Permissions();
         permissions.add(new AllPermission());
         return new ProtectionDomain(new CodeSource(null, (CodeSigner[])null), permissions);
-    }
-
-    /**
-     * Generates a PrivilegedAction implementation class for invoking {@link Context#setGlobal(ScriptObject)} from the
-     * adapter class.
-     */
-    private static byte[] generatePrivilegedActionClassBytes(final String className) {
-        final ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-        // class GlobalSetter implements PrivilegedAction {
-        w.visit(Opcodes.V1_7, ACC_SUPER | ACC_FINAL, className, null, OBJECT_TYPE_NAME, new String[] {
-                PRIVILEGED_ACTION_TYPE_NAME
-        });
-
-        // private final ScriptObject global;
-        w.visitField(ACC_PRIVATE | ACC_FINAL, GLOBAL_FIELD_NAME, SCRIPT_OBJECT_TYPE_DESCRIPTOR, null, null).visitEnd();
-
-        // private GlobalSetter(ScriptObject global) {
-        InstructionAdapter mv = new InstructionAdapter(w.visitMethod(ACC_PRIVATE, INIT,
-                SET_GLOBAL_METHOD_DESCRIPTOR, null, new String[0]));
-        mv.visitCode();
-        // super();
-        mv.visitVarInsn(ALOAD, 0);
-        mv.invokespecial(OBJECT_TYPE_NAME, INIT, VOID_NOARG_METHOD_DESCRIPTOR);
-        // this.global = global;
-        mv.visitVarInsn(ALOAD, 0);
-        mv.visitVarInsn(ALOAD, 1);
-        mv.putfield(className, GLOBAL_FIELD_NAME, SCRIPT_OBJECT_TYPE_DESCRIPTOR);
-
-        mv.visitInsn(RETURN);
-        mv.visitEnd();
-        mv.visitMaxs(0, 0);
-
-        // public Object run() {
-        mv = new InstructionAdapter(w.visitMethod(ACC_PUBLIC, "run", PRIVILEGED_RUN_METHOD_DESCRIPTOR, null,
-                new String[0]));
-        mv.visitCode();
-        // Context.setGlobal(this.global);
-        mv.visitVarInsn(ALOAD, 0);
-        mv.getfield(className, GLOBAL_FIELD_NAME, SCRIPT_OBJECT_TYPE_DESCRIPTOR);
-        mv.invokestatic(CONTEXT_TYPE_NAME, "setGlobal", SET_GLOBAL_METHOD_DESCRIPTOR);
-        // return null;
-        mv.visitInsn(ACONST_NULL);
-        mv.visitInsn(ARETURN);
-
-        mv.visitEnd();
-        mv.visitMaxs(0, 0);
-
-        // static void setGlobal(ScriptObject global) {
-        mv = new InstructionAdapter(w.visitMethod(ACC_STATIC, "setGlobal", SET_GLOBAL_METHOD_DESCRIPTOR, null,
-                new String[0]));
-        mv.visitCode();
-        // new GlobalSetter(ScriptObject global)
-        mv.anew(Type.getType("L" + className + ";"));
-        mv.dup();
-        mv.visitVarInsn(ALOAD, 0);
-        mv.invokespecial(className, INIT, SET_GLOBAL_METHOD_DESCRIPTOR);
-        // AccessController.doPrivileged(...)
-        mv.invokestatic(Type.getInternalName(AccessController.class), "doPrivileged", Type.getMethodDescriptor(
-                OBJECT_TYPE, PRIVILEGED_ACTION_TYPE));
-        mv.pop();
-        mv.visitInsn(RETURN);
-
-        mv.visitEnd();
-        mv.visitMaxs(0, 0);
-
-        return w.toByteArray();
     }
 }

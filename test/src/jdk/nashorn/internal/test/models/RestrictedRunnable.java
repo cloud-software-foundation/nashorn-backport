@@ -23,33 +23,12 @@
  * questions.
  */
 
-package jdk.nashorn.internal.runtime.arrays;
-
-import jdk.nashorn.internal.runtime.JSType;
-import jdk.nashorn.internal.runtime.ScriptObject;
+package jdk.nashorn.internal.test.models;
 
 /**
- * Reverse iterator over a map
+ * Acts as a restricted interface implemented by a restricted class.
+ *
  */
-final class ReverseMapIterator extends MapIterator {
-
-    ReverseMapIterator(final ScriptObject obj, final boolean includeUndefined) {
-        super(obj, includeUndefined);
-        this.index = JSType.toUint32(obj.getLength()) - 1;
-    }
-
-    @Override
-    public boolean isReverse() {
-        return true;
-    }
-
-    @Override
-    protected boolean indexInArray() {
-        return index >= 0;
-    }
-
-    @Override
-    protected long bumpIndex() {
-        return index--;
-    }
+public interface RestrictedRunnable {
+    public void restrictedRun();
 }

@@ -25,14 +25,17 @@
 
 package jdk.nashorn.api.scripting;
 
+import java.security.AccessControlContext;
 import java.security.AccessController;
+import java.security.Permissions;
 import java.security.PrivilegedAction;
+import java.security.ProtectionDomain;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -49,6 +52,14 @@ import jdk.nashorn.internal.runtime.ScriptRuntime;
  * netscape.javascript.JSObject interface.
  */
 public final class ScriptObjectMirror extends JSObject implements Bindings {
+    private static AccessControlContext getContextAccCtxt() {
+        final Permissions perms = new Permissions();
+        perms.add(new RuntimePermission(Context.NASHORN_GET_CONTEXT));
+        return new AccessControlContext(new ProtectionDomain[] { new ProtectionDomain(null, perms) });
+    }
+
+    private static final AccessControlContext GET_CONTEXT_ACC_CTXT = getContextAccCtxt();
+
     private final ScriptObject sobj;
     private final ScriptObject global;
 
@@ -79,56 +90,60 @@ public final class ScriptObjectMirror extends JSObject implements Bindings {
     // JSObject methods
     @Override
     public Object call(final String functionName, final Object... args) {
-        final ScriptObject oldGlobal = NashornScriptEngine.getNashornGlobal();
+        final ScriptObject oldGlobal = Context.getGlobal();
         final boolean globalChanged = (oldGlobal != global);
 
         try {
             if (globalChanged) {
-                NashornScriptEngine.setNashornGlobal(global);
+                Context.setGlobal(global);
             }
 
             final Object val = functionName == null? sobj : sobj.get(functionName);
-            if (! (val instanceof ScriptFunction)) {
-                throw new RuntimeException("No such function " + ((functionName != null)? functionName : ""));
+            if (val instanceof ScriptFunction) {
+                final Object[] modArgs = globalChanged? wrapArray(args, oldGlobal) : args;
+                return wrap(ScriptRuntime.checkAndApply((ScriptFunction)val, sobj, unwrapArray(modArgs, global)), global);
+            } else if (val instanceof ScriptObjectMirror && ((ScriptObjectMirror)val).isFunction()) {
+                return ((ScriptObjectMirror)val).call(null, args);
             }
 
-            final Object[] modArgs = globalChanged? wrapArray(args, oldGlobal) : args;
-            return wrap(ScriptRuntime.checkAndApply((ScriptFunction)val, sobj, unwrapArray(modArgs, global)), global);
+            throw new NoSuchMethodException("No such function " + ((functionName != null)? functionName : ""));
         } catch (final RuntimeException | Error e) {
             throw e;
         } catch (final Throwable t) {
             throw new RuntimeException(t);
         } finally {
             if (globalChanged) {
-                NashornScriptEngine.setNashornGlobal(oldGlobal);
+                Context.setGlobal(oldGlobal);
             }
         }
     }
 
     @Override
     public Object newObject(final String functionName, final Object... args) {
-        final ScriptObject oldGlobal = NashornScriptEngine.getNashornGlobal();
+        final ScriptObject oldGlobal = Context.getGlobal();
         final boolean globalChanged = (oldGlobal != global);
 
         try {
             if (globalChanged) {
-                NashornScriptEngine.setNashornGlobal(global);
+                Context.setGlobal(global);
             }
 
             final Object val = functionName == null? sobj : sobj.get(functionName);
-            if (! (val instanceof ScriptFunction)) {
-                throw new RuntimeException("not a constructor " + ((functionName != null)? functionName : ""));
+            if (val instanceof ScriptFunction) {
+                final Object[] modArgs = globalChanged? wrapArray(args, oldGlobal) : args;
+                return wrap(ScriptRuntime.checkAndConstruct((ScriptFunction)val, unwrapArray(modArgs, global)), global);
+            } else if (val instanceof ScriptObjectMirror && ((ScriptObjectMirror)val).isFunction()) {
+                return ((ScriptObjectMirror)val).newObject(null, args);
             }
 
-            final Object[] modArgs = globalChanged? wrapArray(args, oldGlobal) : args;
-            return wrap(ScriptRuntime.checkAndConstruct((ScriptFunction)val, unwrapArray(modArgs, global)), global);
+            throw new RuntimeException("not a constructor " + ((functionName != null)? functionName : ""));
         } catch (final RuntimeException | Error e) {
             throw e;
         } catch (final Throwable t) {
             throw new RuntimeException(t);
         } finally {
             if (globalChanged) {
-                NashornScriptEngine.setNashornGlobal(oldGlobal);
+                Context.setGlobal(oldGlobal);
             }
         }
     }
@@ -144,7 +159,7 @@ public final class ScriptObjectMirror extends JSObject implements Bindings {
                             public Context run() {
                                 return Context.getContext();
                             }
-                        });
+                        }, GET_CONTEXT_ACC_CTXT);
                 return wrap(context.eval(global, s, null, null, false), global);
             }
         });
@@ -272,7 +287,7 @@ public final class ScriptObjectMirror extends JSObject implements Bindings {
 
     @Override
     public Object put(final String key, final Object value) {
-        final ScriptObject oldGlobal = NashornScriptEngine.getNashornGlobal();
+        final ScriptObject oldGlobal = Context.getGlobal();
         final boolean globalChanged = (oldGlobal != global);
         return inGlobal(new Callable<Object>() {
             @Override public Object call() {
@@ -284,7 +299,7 @@ public final class ScriptObjectMirror extends JSObject implements Bindings {
 
     @Override
     public void putAll(final Map<? extends String, ? extends Object> map) {
-        final ScriptObject oldGlobal = NashornScriptEngine.getNashornGlobal();
+        final ScriptObject oldGlobal = Context.getGlobal();
         final boolean globalChanged = (oldGlobal != global);
         inGlobal(new Callable<Object>() {
             @Override public Object call() {
@@ -360,6 +375,28 @@ public final class ScriptObjectMirror extends JSObject implements Bindings {
                 return wrap(sobj.getProto(), global);
             }
         });
+    }
+
+    /**
+     * Set the __proto__ of this object.
+     * @param proto new proto for this object
+     */
+    public void setProto(final Object proto) {
+        inGlobal(new Callable<Void>() {
+            @Override public Void call() {
+                sobj.setProtoCheck(unwrap(proto, global));
+                return null;
+            }
+        });
+    }
+
+    /**
+     * ECMA [[Class]] property
+     *
+     * @return ECMA [[Class]] property value of this object
+     */
+    public String getClassName() {
+        return sobj.getClassName();
     }
 
     /**
@@ -535,7 +572,7 @@ public final class ScriptObjectMirror extends JSObject implements Bindings {
      * @return wrapped object
      */
     public static Object wrap(final Object obj, final ScriptObject homeGlobal) {
-        return (obj instanceof ScriptObject) ? new ScriptObjectMirror((ScriptObject)obj, homeGlobal) : obj;
+        return (obj instanceof ScriptObject && homeGlobal != null) ? new ScriptObjectMirror((ScriptObject)obj, homeGlobal) : obj;
     }
 
     /**
@@ -599,12 +636,20 @@ public final class ScriptObjectMirror extends JSObject implements Bindings {
     // package-privates below this.
 
     ScriptObjectMirror(final ScriptObject sobj, final ScriptObject global) {
+        assert sobj != null : "ScriptObjectMirror on null!";
+        assert global != null : "null global for ScriptObjectMirror!";
+
         this.sobj = sobj;
         this.global = global;
     }
 
+    // accessors for script engine
     ScriptObject getScriptObject() {
         return sobj;
+    }
+
+    ScriptObject getHomeGlobal() {
+        return global;
     }
 
     static Object translateUndefined(Object obj) {
@@ -613,10 +658,10 @@ public final class ScriptObjectMirror extends JSObject implements Bindings {
 
     // internals only below this.
     private <V> V inGlobal(final Callable<V> callable) {
-        final ScriptObject oldGlobal = NashornScriptEngine.getNashornGlobal();
+        final ScriptObject oldGlobal = Context.getGlobal();
         final boolean globalChanged = (oldGlobal != global);
         if (globalChanged) {
-            NashornScriptEngine.setNashornGlobal(global);
+            Context.setGlobal(global);
         }
         try {
             return callable.call();
@@ -626,9 +671,8 @@ public final class ScriptObjectMirror extends JSObject implements Bindings {
             throw new AssertionError("Cannot happen", e);
         } finally {
             if (globalChanged) {
-                NashornScriptEngine.setNashornGlobal(oldGlobal);
+                Context.setGlobal(oldGlobal);
             }
         }
     }
-
 }

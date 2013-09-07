@@ -45,6 +45,7 @@ import static jdk.nashorn.internal.codegen.CompilerConstants.methodDescriptor;
 import static jdk.nashorn.internal.codegen.CompilerConstants.staticCallNoLookup;
 import static jdk.nashorn.internal.codegen.CompilerConstants.staticField;
 import static jdk.nashorn.internal.codegen.CompilerConstants.typeDescriptor;
+import static jdk.nashorn.internal.codegen.CompilerConstants.virtualCallNoLookup;
 import static jdk.nashorn.internal.ir.Symbol.IS_INTERNAL;
 import static jdk.nashorn.internal.ir.Symbol.IS_TEMP;
 import static jdk.nashorn.internal.runtime.linker.NashornCallSiteDescriptor.CALLSITE_FAST_SCOPE;
@@ -131,6 +132,7 @@ import jdk.nashorn.internal.runtime.ScriptObject;
 import jdk.nashorn.internal.runtime.ScriptRuntime;
 import jdk.nashorn.internal.runtime.Source;
 import jdk.nashorn.internal.runtime.Undefined;
+import jdk.nashorn.internal.runtime.arrays.ArrayData;
 import jdk.nashorn.internal.runtime.linker.LinkerCallSite;
 
 /**
@@ -1262,7 +1264,11 @@ final class CodeGenerator extends NodeOperatorVisitor<CodeGeneratorLexicalContex
             classEmitter.needGetConstantMethod(cls);
         } else {
             method.loadConstants().load(index).arrayload();
-            if (cls != Object.class) {
+            if (object instanceof ArrayData) {
+                // avoid cast to non-public ArrayData subclass
+                method.checkcast(ArrayData.class);
+                method.invoke(virtualCallNoLookup(ArrayData.class, "copy", ArrayData.class));
+            } else if (cls != Object.class) {
                 method.checkcast(cls);
             }
         }
@@ -1355,6 +1361,7 @@ final class CodeGenerator extends NodeOperatorVisitor<CodeGeneratorLexicalContex
         final List<Expression> values  = new ArrayList<>();
 
         boolean hasGettersSetters = false;
+        Expression protoNode = null;
 
         for (PropertyNode propertyNode: elements) {
             final Expression   value        = propertyNode.getValue();
@@ -1363,6 +1370,9 @@ final class CodeGenerator extends NodeOperatorVisitor<CodeGeneratorLexicalContex
 
             if (value == null) {
                 hasGettersSetters = true;
+            } else if (key.equals(ScriptObject.PROTO_PROPERTY_NAME)) {
+                protoNode = value;
+                continue;
             }
 
             keys.add(key);
@@ -1404,8 +1414,13 @@ final class CodeGenerator extends NodeOperatorVisitor<CodeGeneratorLexicalContex
         }
 
         method.dup();
-        globalObjectPrototype();
-        method.invoke(ScriptObject.SET_PROTO);
+        if (protoNode != null) {
+            load(protoNode);
+            method.invoke(ScriptObject.SET_PROTO_CHECK);
+        } else {
+            globalObjectPrototype();
+            method.invoke(ScriptObject.SET_PROTO);
+        }
 
         if (hasGettersSetters) {
             for (final PropertyNode propertyNode : elements) {
@@ -1754,7 +1769,7 @@ final class CodeGenerator extends NodeOperatorVisitor<CodeGeneratorLexicalContex
             caller.ifne(breakLabel);
             //has to be zero
             caller.label(new Label("split_return"));
-            method.loadCompilerConstant(RETURN);
+            caller.loadCompilerConstant(RETURN);
             caller._return(lc.getCurrentFunction().getReturnType());
             caller.label(breakLabel);
         } else {
@@ -1783,6 +1798,11 @@ final class CodeGenerator extends NodeOperatorVisitor<CodeGeneratorLexicalContex
                 }
             }
             caller.label(breakLabel);
+        }
+
+        // If split has a return and caller is itself a split method it needs to propagate the return.
+        if (hasReturn) {
+            caller.setHasReturn();
         }
 
         return splitNode;

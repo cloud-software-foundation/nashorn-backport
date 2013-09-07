@@ -230,7 +230,7 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
     }
 
     /**
-     * Indicate that a prototype property hash changed.
+     * Indicate that a prototype property has changed.
      *
      * @param property {@link Property} to invalidate.
      */
@@ -247,6 +247,18 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
                 }
                 SwitchPoint.invalidateAll(new SwitchPoint[] { sp });
             }
+        }
+    }
+
+    /**
+     * Indicate that proto itself has changed in hierachy somewhere.
+     */
+    private void invalidateAllProtoGetSwitchPoints() {
+        assert !isShared() : "proto invalidation on a shared PropertyMap";
+
+        if (protoGetSwitches != null) {
+            final Collection<SwitchPoint> sws = protoGetSwitches.values();
+            SwitchPoint.invalidateAll(sws.toArray(new SwitchPoint[sws.size()]));
         }
     }
 
@@ -352,11 +364,15 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
         return newMap;
     }
 
-    /*
+    /**
      * Make a new UserAccessorProperty property. getter and setter functions are stored in
      * this ScriptObject and slot values are used in property object. Note that slots
      * are assigned speculatively and should be added to map before adding other
      * properties.
+     *
+     * @param key the property name
+     * @param propertyFlags attribute flags of the property
+     * @return the newly created UserAccessorProperty
      */
     public UserAccessorProperty newUserAccessors(final String key, final int propertyFlags) {
         int oldSpillLength = spillLength;
@@ -872,6 +888,15 @@ public final class PropertyMap implements Iterable<Object>, PropertyListener {
     @Override
     public void propertyModified(final ScriptObject object, final Property oldProp, final Property newProp) {
         invalidateProtoGetSwitchPoint(oldProp);
+    }
+
+    @Override
+    public void protoChanged(final ScriptObject object, final ScriptObject oldProto, final ScriptObject newProto) {
+        // We may walk and invalidate SwitchPoints for properties inherited
+        // from 'object' or it's old proto chain. But, it may not be worth it.
+        // For example, a new proto may have a user defined getter/setter for
+        // a data property down the chain. So, invalidating all is better.
+        invalidateAllProtoGetSwitchPoints();
     }
 
     /*

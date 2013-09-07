@@ -36,10 +36,15 @@ import jdk.internal.dynalink.CallSiteDescriptor;
 import jdk.internal.dynalink.DynamicLinker;
 import jdk.internal.dynalink.DynamicLinkerFactory;
 import jdk.internal.dynalink.beans.BeansLinker;
+import jdk.internal.dynalink.beans.StaticClass;
 import jdk.internal.dynalink.linker.GuardedInvocation;
 import jdk.internal.dynalink.linker.LinkerServices;
+import jdk.nashorn.api.scripting.ScriptObjectMirror;
 import jdk.nashorn.internal.codegen.CompilerConstants.Call;
 import jdk.nashorn.internal.codegen.RuntimeCallSite;
+import jdk.nashorn.internal.runtime.JSType;
+import jdk.nashorn.internal.runtime.ScriptFunction;
+import jdk.nashorn.internal.runtime.ScriptRuntime;
 import jdk.nashorn.internal.runtime.options.Options;
 
 /**
@@ -57,14 +62,54 @@ public final class Bootstrap {
     static {
         final DynamicLinkerFactory factory = new DynamicLinkerFactory();
         factory.setPrioritizedLinkers(new NashornLinker(), new NashornPrimitiveLinker(), new NashornStaticClassLinker(),
-                new BoundDynamicMethodLinker(), new JSObjectLinker(), new ReflectionCheckLinker());
+                new BoundDynamicMethodLinker(), new JavaSuperAdapterLinker(), new JSObjectLinker(), new ReflectionCheckLinker());
         factory.setFallbackLinkers(new BeansLinker(), new NashornBottomLinker());
         factory.setSyncOnRelink(true);
         final int relinkThreshold = Options.getIntProperty("nashorn.unstable.relink.threshold", -1);
         if (relinkThreshold > -1) {
             factory.setUnstableRelinkThreshold(relinkThreshold);
         }
+
+        // Linkers for any additional language runtimes deployed alongside Nashorn will be picked up by the factory.
+        factory.setClassLoader(Bootstrap.class.getClassLoader());
+
         dynamicLinker = factory.createLinker();
+    }
+
+    /**
+     * Returns if the given object is a "callable"
+     * @param obj object to be checked for callability
+     * @return true if the obj is callable
+     */
+    public static boolean isCallable(final Object obj) {
+        if (obj == ScriptRuntime.UNDEFINED || obj == null) {
+            return false;
+        }
+
+        return obj instanceof ScriptFunction ||
+            ((obj instanceof ScriptObjectMirror) && ((ScriptObjectMirror)obj).isFunction()) ||
+            isDynamicMethod(obj) ||
+            isFunctionalInterfaceObject(obj) ||
+            obj instanceof StaticClass;
+    }
+
+    /**
+     * Returns if the given object is a dynalink Dynamic method
+     * @param obj object to be checked
+     * @return true if the obj is a dynamic method
+     */
+    public static boolean isDynamicMethod(final Object obj) {
+        return obj instanceof BoundDynamicMethod || BeansLinker.isDynamicMethod(obj);
+    }
+
+    /**
+     * Returns if the given object is an instance of an interface annotated with
+     * java.lang.FunctionalInterface
+     * @param obj object to be checked
+     * @return true if the obj is an instance of @FunctionalInterface interface
+     */
+    public static boolean isFunctionalInterfaceObject(final Object obj) {
+        return !JSType.isPrimitive(obj) && (NashornBottomLinker.getFunctionalInterfaceMethod(obj.getClass()) != null);
     }
 
     /**
@@ -216,6 +261,16 @@ public final class Bootstrap {
      */
     public static Object bindDynamicMethod(Object dynamicMethod, Object boundThis) {
         return new BoundDynamicMethod(dynamicMethod, boundThis);
+    }
+
+    /**
+     * Creates a super-adapter for an adapter, that is, an adapter to the adapter that allows invocation of superclass
+     * methods on it.
+     * @param adapter the original adapter
+     * @return a new adapter that can be used to invoke super methods on the original adapter.
+     */
+    public static Object createSuperAdapter(final Object adapter) {
+        return new JavaSuperAdapter(adapter);
     }
 
     /**

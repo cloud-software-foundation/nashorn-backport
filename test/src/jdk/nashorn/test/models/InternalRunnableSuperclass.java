@@ -23,58 +23,23 @@
  * questions.
  */
 
-package jdk.nashorn.internal.runtime.arrays;
+package jdk.nashorn.test.models;
 
-import java.util.NoSuchElementException;
-import jdk.nashorn.internal.runtime.JSType;
-import jdk.nashorn.internal.runtime.ScriptObject;
+import jdk.internal.dynalink.beans.StaticClass;
+import jdk.nashorn.internal.test.models.InternalRunnable;
 
 /**
- * Iterator over a map
+ * Acts as a non-restricted superclass for a restricted class.
+ *
  */
-class MapIterator extends ArrayLikeIterator<Object> {
+public class InternalRunnableSuperclass {
+    public final int canSeeThisField = 19;
 
-    protected final ScriptObject obj;
-    private final long length;
-
-    MapIterator(final ScriptObject obj, final boolean includeUndefined) {
-        super(includeUndefined);
-        this.obj    = obj;
-        this.length = JSType.toUint32(obj.getLength());
-        this.index  = 0;
+    public static Object makeInternalRunnable() {
+        return new InternalRunnable();
     }
 
-    protected boolean indexInArray() {
-        return index < length;
-    }
-
-    @Override
-    public long getLength() {
-        return length;
-    }
-
-    @Override
-    public boolean hasNext() {
-        if (length == 0L) {
-            return false; //return empty string if toUint32(length) == 0
-        }
-
-        while (indexInArray()) {
-            if (obj.has(index) || includeUndefined) {
-                break;
-            }
-            bumpIndex();
-        }
-
-        return indexInArray();
-    }
-
-    @Override
-    public Object next() {
-        if (indexInArray()) {
-            return obj.get(bumpIndex());
-        }
-
-        throw new NoSuchElementException();
+    public static StaticClass getInternalRunnableType() {
+        return StaticClass.forClass(InternalRunnable.class);
     }
 }

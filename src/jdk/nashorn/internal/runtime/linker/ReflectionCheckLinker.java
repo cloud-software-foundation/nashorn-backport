@@ -76,9 +76,10 @@ final class ReflectionCheckLinker implements TypeBasedGuardingDynamicLinker{
                 final CallSiteDescriptor desc = requestWithoutContext.getCallSiteDescriptor();
                 if(CallSiteDescriptorFactory.tokenizeOperators(desc).contains("getProp")) {
                     if ("static".equals(desc.getNameToken(CallSiteDescriptor.NAME_OPERAND))) {
-                        Context.checkPackageAccess(((Class)self).getName());
-                        // If "getProp:static" passes package access, allow access.
-                        return;
+                        if (Context.isAccessibleClass((Class<?>)self) && !isReflectionClass((Class<?>)self)) {
+                            // If "getProp:static" passes access checks, allow access.
+                            return;
+                        }
                     }
                 }
             }
@@ -87,6 +88,6 @@ final class ReflectionCheckLinker implements TypeBasedGuardingDynamicLinker{
     }
 
     private static void checkReflectionPermission(final SecurityManager sm) {
-        sm.checkPermission(new RuntimePermission("nashorn.JavaReflection"));
+        sm.checkPermission(new RuntimePermission(Context.NASHORN_JAVA_REFLECTION));
     }
 }

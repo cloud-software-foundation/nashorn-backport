@@ -33,6 +33,7 @@ import javax.script.ScriptEngine;
 import javax.script.ScriptEngineManager;
 import javax.script.ScriptException;
 import org.testng.TestNG;
+import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
@@ -44,7 +45,7 @@ import org.testng.annotations.Test;
 public class BooleanAccessTest {
 
     private static ScriptEngine e = null;
-    private static SharedObject o = new SharedObject();
+    private static SharedObject o = null;
 
     public static void main(final String[] args) {
         TestNG.main(args);
@@ -54,8 +55,15 @@ public class BooleanAccessTest {
     public static void setUpClass() throws ScriptException {
         final ScriptEngineManager m = new ScriptEngineManager();
         e = m.getEngineByName("nashorn");
+        o = new SharedObject();
         e.put("o", o);
         e.eval("var SharedObject = Packages.jdk.nashorn.api.javaaccess.SharedObject;");
+    }
+
+    @AfterClass
+    public static void tearDownClass() {
+        e = null;
+        o = null;
     }
 
     @Test
@@ -72,7 +80,7 @@ public class BooleanAccessTest {
         e.eval("var p_boolean_array = o.publicBooleanArray;");
         assertEquals(o.publicBooleanArray[0], e.eval("o.publicBooleanArray[0]"));
         assertTrue(Arrays.equals(o.publicBooleanArray, (boolean[])e.get("p_boolean_array")));
-        e.eval("var t_boolean_arr = java.lang.reflect.Array.newInstance(java.lang.Boolean.TYPE, 3);" +
+        e.eval("var t_boolean_arr = new (Java.type(\"boolean[]\"))(3);" +
                 "t_boolean_arr[0] = true;" +
                 "t_boolean_arr[1] = false;" +
                 "t_boolean_arr[2] = false;" +
@@ -96,7 +104,7 @@ public class BooleanAccessTest {
         e.eval("var ps_boolean_array = SharedObject.publicStaticBooleanArray;");
         assertEquals(SharedObject.publicStaticBooleanArray[0], e.eval("SharedObject.publicStaticBooleanArray[0]"));
         assertTrue(Arrays.equals(SharedObject.publicStaticBooleanArray, (boolean[])e.get("ps_boolean_array")));
-        e.eval("var ts_boolean_arr = java.lang.reflect.Array.newInstance(java.lang.Boolean.TYPE, 3);" +
+        e.eval("var ts_boolean_arr = new (Java.type(\"boolean[]\"))(3);" +
                 "ts_boolean_arr[0] = true;" +
                 "ts_boolean_arr[1] = false;" +
                 "ts_boolean_arr[2] = true;" +
@@ -120,7 +128,7 @@ public class BooleanAccessTest {
         e.eval("var pf_boolean_array = o.publicFinalBooleanArray;");
         assertEquals(o.publicFinalBooleanArray[0], e.eval("o.publicFinalBooleanArray[0]"));
         assertTrue(Arrays.equals(o.publicFinalBooleanArray, (boolean[])e.get("pf_boolean_array")));
-        e.eval("var tf_boolean_arr = java.lang.reflect.Array.newInstance(java.lang.Boolean.TYPE, 3);" +
+        e.eval("var tf_boolean_arr = new (Java.type(\"boolean[]\"))(3);" +
                 "tf_boolean_arr[0] = false;" +
                 "tf_boolean_arr[1] = false;" +
                 "tf_boolean_arr[2] = true;" +
@@ -144,7 +152,7 @@ public class BooleanAccessTest {
         e.eval("var psf_boolean_array = SharedObject.publicStaticFinalBooleanArray;");
         assertEquals(SharedObject.publicStaticFinalBooleanArray[0], e.eval("SharedObject.publicStaticFinalBooleanArray[0]"));
         assertTrue(Arrays.equals(SharedObject.publicStaticFinalBooleanArray, (boolean[])e.get("psf_boolean_array")));
-        e.eval("var tsf_boolean_arr = java.lang.reflect.Array.newInstance(java.lang.Boolean.TYPE, 3);" +
+        e.eval("var tsf_boolean_arr = new (Java.type(\"boolean[]\"))(3);" +
                 "tsf_boolean_arr[0] = false;" +
                 "tsf_boolean_arr[1] = true;" +
                 "tsf_boolean_arr[2] = false;" +

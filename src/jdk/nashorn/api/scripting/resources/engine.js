@@ -23,10 +23,9 @@
 
 /**
  * This script file is executed by script engine at the construction
- * of the engine. The functions here assume global variables "context"
- * of type javax.script.ScriptContext and "engine" of the type
+ * of the every new Global object. The functions here assume global variables
+ * "context" of type javax.script.ScriptContext and "engine" of the type
  * jdk.nashorn.api.scripting.NashornScriptEngine.
- *
  **/
 
 Object.defineProperty(this, "__noSuchProperty__", {
@@ -39,12 +38,20 @@ Object.defineProperty(this, "__noSuchProperty__", {
     }
 });
 
-function print(str) {
-    var writer = context.getWriter();
+function print() {
+    var writer = context != null? context.writer : engine.context.writer;
     if (! (writer instanceof java.io.PrintWriter)) {
         writer = new java.io.PrintWriter(writer);
     }
-    writer.println(String(str));
+    
+    var buf = new java.lang.StringBuilder();
+    for (var i = 0; i < arguments.length; i++) {
+        if (i != 0) {
+            buf.append(' ');
+        }
+        buf.append(String(arguments[i]));
+    }
+    writer.println(buf.toString());
 }
 
 /**

@@ -44,6 +44,7 @@ public enum TokenType {
     ERROR          (SPECIAL,  null),
     EOF            (SPECIAL,  null),
     EOL            (SPECIAL,  null),
+    COMMENT        (SPECIAL,  null),
 
     NOT            (UNARY,   "!",    14, false),
     NE             (BINARY,  "!=",    9, true),
@@ -283,7 +284,7 @@ public enum TokenType {
 
     @Override
     public String toString() {
-        return name;
+        return getNameOrType();
     }
 
     static {

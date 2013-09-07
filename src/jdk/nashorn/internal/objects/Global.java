@@ -35,12 +35,12 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.ref.SoftReference;
 import java.lang.reflect.Field;
-import java.security.AccessController;
-import java.security.PrivilegedAction;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import jdk.internal.dynalink.linker.GuardedInvocation;
 import jdk.internal.dynalink.linker.LinkRequest;
 import jdk.nashorn.internal.objects.annotations.Attribute;
@@ -63,6 +63,7 @@ import jdk.nashorn.internal.runtime.ScriptObject;
 import jdk.nashorn.internal.runtime.ScriptRuntime;
 import jdk.nashorn.internal.runtime.ScriptingFunctions;
 import jdk.nashorn.internal.runtime.Source;
+import jdk.nashorn.internal.runtime.linker.Bootstrap;
 import jdk.nashorn.internal.runtime.linker.InvokeByName;
 import jdk.nashorn.internal.scripts.JO;
 
@@ -71,8 +72,8 @@ import jdk.nashorn.internal.scripts.JO;
  */
 @ScriptClass("Global")
 public final class Global extends ScriptObject implements GlobalObject, Scope {
-    private static final InvokeByName TO_STRING = new InvokeByName("toString", ScriptObject.class);
-    private static final InvokeByName VALUE_OF  = new InvokeByName("valueOf",  ScriptObject.class);
+    private final InvokeByName TO_STRING = new InvokeByName("toString", ScriptObject.class);
+    private final InvokeByName VALUE_OF  = new InvokeByName("valueOf",  ScriptObject.class);
 
     /** ECMA 15.1.2.2 parseInt (string , radix) */
     @Property(attributes = Attribute.NOT_ENUMERABLE)
@@ -411,18 +412,33 @@ public final class Global extends ScriptObject implements GlobalObject, Scope {
     // initialized by nasgen
     private static PropertyMap $nasgenmap$;
 
+    // performs initialization checks for Global constructor and returns the
+    // PropertyMap, if everything is fine.
+    private static PropertyMap checkAndGetMap(final Context context) {
+        // security check first
+        final SecurityManager sm = System.getSecurityManager();
+        if (sm != null) {
+            sm.checkPermission(new RuntimePermission(Context.NASHORN_CREATE_GLOBAL));
+        }
+
+        // null check on context
+        context.getClass();
+
+        /*
+         * Duplicate global's map and use it. This way the initial Map filled
+         * by nasgen (referenced from static field in this class) is retained
+         * 'as is' (as that one is process wide singleton.
+         */
+        return $nasgenmap$.duplicate();
+    }
+
     /**
      * Constructor
      *
      * @param context the context
      */
     public Global(final Context context) {
-        /*
-         * Duplicate global's map and use it. This way the initial Map filled
-         * by nasgen (referenced from static field in this class) is retained
-         * 'as is' (as that one is process wide singleton.
-         */
-        super($nasgenmap$.duplicate());
+        super(checkAndGetMap(context));
         this.setContext(context);
         this.setIsScope();
 
@@ -533,7 +549,8 @@ public final class Global extends ScriptObject implements GlobalObject, Scope {
             if (hint == String.class) {
 
                 final Object toString = TO_STRING.getGetter().invokeExact(sobj);
-                if (toString instanceof ScriptFunction) {
+
+                if (Bootstrap.isCallable(toString)) {
                     final Object value = TO_STRING.getInvoker().invokeExact(toString, sobj);
                     if (JSType.isPrimitive(value)) {
                         return value;
@@ -541,7 +558,7 @@ public final class Global extends ScriptObject implements GlobalObject, Scope {
                 }
 
                 final Object valueOf = VALUE_OF.getGetter().invokeExact(sobj);
-                if (valueOf instanceof ScriptFunction) {
+                if (Bootstrap.isCallable(valueOf)) {
                     final Object value = VALUE_OF.getInvoker().invokeExact(valueOf, sobj);
                     if (JSType.isPrimitive(value)) {
                         return value;
@@ -552,7 +569,7 @@ public final class Global extends ScriptObject implements GlobalObject, Scope {
 
             if (hint == Number.class) {
                 final Object valueOf = VALUE_OF.getGetter().invokeExact(sobj);
-                if (valueOf instanceof ScriptFunction) {
+                if (Bootstrap.isCallable(valueOf)) {
                     final Object value = VALUE_OF.getInvoker().invokeExact(valueOf, sobj);
                     if (JSType.isPrimitive(value)) {
                         return value;
@@ -560,7 +577,7 @@ public final class Global extends ScriptObject implements GlobalObject, Scope {
                 }
 
                 final Object toString = TO_STRING.getGetter().invokeExact(sobj);
-                if (toString instanceof ScriptFunction) {
+                if (Bootstrap.isCallable(toString)) {
                     final Object value = TO_STRING.getInvoker().invokeExact(toString, sobj);
                     if (JSType.isPrimitive(value)) {
                         return value;
@@ -690,6 +707,35 @@ public final class Global extends ScriptObject implements GlobalObject, Scope {
     public void cacheClass(final Source source, final Class<?> clazz) {
         assert classCache != null : "Class cache used without being initialized";
         classCache.put(source, new SoftReference<Class<?>>(clazz));
+    }
+
+    private static <T> T getLazilyCreatedValue(final Object key, final Callable<T> creator, final Map<Object, T> map) {
+        final T obj = map.get(key);
+        if (obj != null) {
+            return obj;
+        }
+
+        try {
+            final T newObj = creator.call();
+            final T existingObj = map.putIfAbsent(key, newObj);
+            return existingObj != null ? existingObj : newObj;
+        } catch (final Exception exp) {
+            throw new RuntimeException(exp);
+        }
+    }
+
+    private final Map<Object, InvokeByName> namedInvokers = new ConcurrentHashMap<>();
+
+    @Override
+    public InvokeByName getInvokeByName(final Object key, final Callable<InvokeByName> creator) {
+        return getLazilyCreatedValue(key, creator, namedInvokers);
+    }
+
+    private final Map<Object, MethodHandle> dynamicInvokers = new ConcurrentHashMap<>();
+
+    @Override
+    public MethodHandle getDynamicInvoker(final Object key, final Callable<MethodHandle> creator) {
+        return getLazilyCreatedValue(key, creator, dynamicInvokers);
     }
 
     /**
@@ -1732,19 +1778,13 @@ public final class Global extends ScriptObject implements GlobalObject, Scope {
     }
 
     private static void copyOptions(final ScriptObject options, final ScriptEnvironment scriptEnv) {
-        AccessController.doPrivileged(new PrivilegedAction<Void>() {
-            @Override
-            public Void run() {
-                for (Field f : scriptEnv.getClass().getFields()) {
-                    try {
-                        options.set(f.getName(), f.get(scriptEnv), false);
-                    } catch (final IllegalArgumentException | IllegalAccessException exp) {
-                        throw new RuntimeException(exp);
-                    }
-                }
-                return null;
+        for (Field f : scriptEnv.getClass().getFields()) {
+            try {
+                options.set(f.getName(), f.get(scriptEnv), false);
+            } catch (final IllegalArgumentException | IllegalAccessException exp) {
+                throw new RuntimeException(exp);
             }
-        });
+        }
     }
 
     private void initTypedArray() {

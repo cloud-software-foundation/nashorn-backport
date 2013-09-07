@@ -23,34 +23,33 @@
  * questions.
  */
 
-package jdk.nashorn.internal.runtime.linker;
+package jdk.nashorn.internal.runtime.arrays;
 
-import jdk.internal.org.objectweb.asm.Type;
-import jdk.nashorn.internal.runtime.Context;
+import jdk.nashorn.internal.runtime.JSType;
 import jdk.nashorn.internal.runtime.ScriptObject;
 
 /**
- * Base class for both {@link JavaAdapterBytecodeGenerator} and {@link JavaAdapterClassLoader}, containing those
- * bytecode types, type names and method descriptor that are used by both.
+ * Reverse iterator over a map
  */
-@SuppressWarnings("javadoc")
-abstract class JavaAdapterGeneratorBase {
-    static final Type CONTEXT_TYPE       = Type.getType(Context.class);
-    static final Type OBJECT_TYPE        = Type.getType(Object.class);
-    static final Type SCRIPT_OBJECT_TYPE = Type.getType(ScriptObject.class);
+final class ReverseScriptObjectIterator extends ScriptObjectIterator {
 
-    static final String CONTEXT_TYPE_NAME = CONTEXT_TYPE.getInternalName();
-    static final String OBJECT_TYPE_NAME  = OBJECT_TYPE.getInternalName();
+    ReverseScriptObjectIterator(final ScriptObject obj, final boolean includeUndefined) {
+        super(obj, includeUndefined);
+        this.index = JSType.toUint32(obj.getLength()) - 1;
+    }
 
-    static final String INIT = "<init>";
+    @Override
+    public boolean isReverse() {
+        return true;
+    }
 
-    static final String GLOBAL_FIELD_NAME = "global";
+    @Override
+    protected boolean indexInArray() {
+        return index >= 0;
+    }
 
-    static final String SCRIPT_OBJECT_TYPE_DESCRIPTOR = SCRIPT_OBJECT_TYPE.getDescriptor();
-
-    static final String SET_GLOBAL_METHOD_DESCRIPTOR = Type.getMethodDescriptor(Type.VOID_TYPE, SCRIPT_OBJECT_TYPE);
-    static final String VOID_NOARG_METHOD_DESCRIPTOR = Type.getMethodDescriptor(Type.VOID_TYPE);
-
-    protected JavaAdapterGeneratorBase() {
+    @Override
+    protected long bumpIndex() {
+        return index--;
     }
 }

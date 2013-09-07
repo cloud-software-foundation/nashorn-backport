@@ -30,7 +30,7 @@ import jdk.nashorn.internal.runtime.ScriptObject;
 /**
  * Iterator over a NativeArray
  */
-public class ArrayIterator extends ArrayLikeIterator<Object> {
+class ScriptArrayIterator extends ArrayLikeIterator<Object> {
 
     /** Array {@link ScriptObject} to iterate over */
     protected final ScriptObject array;
@@ -43,7 +43,7 @@ public class ArrayIterator extends ArrayLikeIterator<Object> {
      * @param array array to iterate over
      * @param includeUndefined should undefined elements be included in iteration
      */
-    protected ArrayIterator(final ScriptObject array, final boolean includeUndefined) {
+    protected ScriptArrayIterator(final ScriptObject array, final boolean includeUndefined) {
         super(includeUndefined);
         this.array = array;
         this.length = array.getArray().length();
