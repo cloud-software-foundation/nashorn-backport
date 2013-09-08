@@ -717,7 +717,18 @@ public final class Global extends ScriptObject implements GlobalObject, Scope {
 
         try {
             final T newObj = creator.call();
-            final T existingObj = map.putIfAbsent(key, newObj);
+//            final T existingObj = map.putIfAbsent(key, newObj); // putIfAbsent not in JDK7
+	        T existingObj;
+	        if (map instanceof java.util.concurrent.ConcurrentMap) {
+		        existingObj = ((java.util.concurrent.ConcurrentMap<Object, T>) map).putIfAbsent(key, newObj);
+	        } else {
+		        if (!map.containsKey(key)) {
+			        map.put(key, newObj);
+			        existingObj = null;
+		        } else {
+			        existingObj = map.get(key);
+		        }
+	        }
             return existingObj != null ? existingObj : newObj;
         } catch (final Exception exp) {
             throw new RuntimeException(exp);

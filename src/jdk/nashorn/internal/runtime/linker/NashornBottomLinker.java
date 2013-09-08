@@ -96,7 +96,8 @@ final class NashornBottomLinker implements GuardingDynamicLinker {
             if (m != null) {
                 final MethodType callType = desc.getMethodType();
                 // 'callee' and 'thiz' passed from script + actual arguments
-                if (callType.parameterCount() != m.getParameterCount() + 2) {
+                //if (callType.parameterCount() != m.getParameterCount() + 2) {
+                if (callType.parameterCount() != m.getParameterTypes().length + 2) {
                     throw typeError("no.method.matches.args", ScriptRuntime.safeToString(self));
                 }
                 return new GuardedInvocation(
@@ -188,14 +189,15 @@ final class NashornBottomLinker implements GuardingDynamicLinker {
                 }
 
                 // check for @FunctionalInterface
-                if (iface.isAnnotationPresent(FunctionalInterface.class)) {
-                    // return the first abstract method
-                    for (final Method m : iface.getMethods()) {
-                        if (Modifier.isAbstract(m.getModifiers())) {
-                            return m;
-                        }
-                    }
-                }
+//                if (iface.isAnnotationPresent(FunctionalInterface.class)) {
+//                    // return the first abstract method
+//                    for (final Method m : iface.getMethods()) {
+//                        if (Modifier.isAbstract(m.getModifiers())) {
+//                            return m;
+//                        }
+//                    }
+//                }
+	            // Not supported in JDK7
             }
 
             // did not find here, try super class
