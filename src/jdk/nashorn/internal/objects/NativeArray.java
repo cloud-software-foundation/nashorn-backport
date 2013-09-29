@@ -41,7 +41,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.Callable;
 
-import jdk.nashorn.api.scripting.ScriptObjectMirror;
+import jdk.nashorn.api.scripting.JSObject;
 import jdk.nashorn.internal.objects.annotations.Attribute;
 import jdk.nashorn.internal.objects.annotations.Constructor;
 import jdk.nashorn.internal.objects.annotations.Function;
@@ -374,7 +374,7 @@ public final class NativeArray extends ScriptObject {
     public static Object isArray(final Object self, final Object arg) {
         return isArray(arg) || (arg == Global.instance().getArrayPrototype())
                 || (arg instanceof NativeRegExpExecResult)
-                || (arg instanceof ScriptObjectMirror && ((ScriptObjectMirror)arg).isArray());
+                || (arg instanceof JSObject && ((JSObject)arg).isArray());
     }
 
     /**
@@ -860,9 +860,12 @@ public final class NativeArray extends ScriptObject {
             return new NativeArray(sobj.getArray().slice(k, finale));
         }
 
-        final NativeArray copy = new NativeArray(0);
+        // Construct array with proper length to have a deleted filter on undefined elements
+        final NativeArray copy = new NativeArray(finale - k);
         for (long n = 0; k < finale; n++, k++) {
-            copy.defineOwnProperty(ArrayIndex.getArrayIndex(n), sobj.get(k));
+            if (sobj.has(k)) {
+                copy.defineOwnProperty(ArrayIndex.getArrayIndex(n), sobj.get(k));
+            }
         }
 
         return copy;

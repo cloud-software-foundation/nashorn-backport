@@ -23,59 +23,34 @@
  * questions.
  */
 
-package jdk.nashorn.internal.runtime.arrays;
+package jdk.nashorn.internal.runtime;
 
-import java.util.NoSuchElementException;
-import jdk.nashorn.api.scripting.ScriptObjectMirror;
-import jdk.nashorn.internal.runtime.JSType;
+import jdk.nashorn.api.scripting.JSObject;
 
 /**
- * Iterator over a ScriptObjectMirror
+ * A ListAdapter that can wraps a JSObject.
  */
-class ScriptObjectMirrorIterator extends ArrayLikeIterator<Object> {
-
-    protected final ScriptObjectMirror obj;
-    private final long length;
-
-    ScriptObjectMirrorIterator(final ScriptObjectMirror obj, final boolean includeUndefined) {
-        super(includeUndefined);
-        this.obj    = obj;
-        this.length = JSType.toUint32(obj.containsKey("length")? obj.getMember("length") : 0);
-        this.index  = 0;
-    }
-
-    protected boolean indexInArray() {
-        return index < length;
+public final class JSObjectListAdapter extends ListAdapter {
+    /**
+     * Creates a new list wrapper for the specified JSObject.
+     * @param obj JSOcript the object to wrap
+     */
+    public JSObjectListAdapter(final JSObject obj) {
+        super(obj);
     }
 
     @Override
-    public long getLength() {
-        return length;
+    public int size() {
+        return JSType.toInt32(((JSObject)obj).getMember("length"));
     }
 
     @Override
-    public boolean hasNext() {
-        if (length == 0L) {
-            return false; //return empty string if toUint32(length) == 0
-        }
-
-        while (indexInArray()) {
-            if (obj.containsKey(index) || includeUndefined) {
-                break;
-            }
-            bumpIndex();
-        }
-
-        return indexInArray();
+    protected Object getAt(int index) {
+        return ((JSObject)obj).getSlot(index);
     }
 
     @Override
-    public Object next() {
-        if (indexInArray()) {
-            return obj.get(bumpIndex());
-        }
-
-        throw new NoSuchElementException();
+    protected void setAt(int index, Object element) {
+        ((JSObject)obj).setSlot(index, element);
     }
 }
-
