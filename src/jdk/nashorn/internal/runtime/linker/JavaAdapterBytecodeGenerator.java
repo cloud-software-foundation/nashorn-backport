@@ -66,7 +66,6 @@ import jdk.internal.org.objectweb.asm.commons.InstructionAdapter;
 import jdk.nashorn.internal.runtime.Context;
 import jdk.nashorn.internal.runtime.ScriptFunction;
 import jdk.nashorn.internal.runtime.ScriptObject;
-import sun.reflect.CallerSensitive;
 
 /**
  * Generates bytecode for a Java adapter class. Used by the {@link JavaAdapterFactory}.
@@ -959,6 +958,7 @@ final class JavaAdapterBytecodeGenerator {
     }
 
     private static boolean isCallerSensitive(final AccessibleObject e) {
-        return e.isAnnotationPresent(CallerSensitive.class);
+        //return e.isAnnotationPresent(CallerSensitive.class);
+	    return false; // Not supported in JDK7
     }
 }

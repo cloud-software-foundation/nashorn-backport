@@ -127,7 +127,7 @@ public abstract class Range {
 
         @Override
         public int hashCode() {
-            return Long.hashCode(min) ^ Long.hashCode(max);
+	    return (int) (min ^ max);
         }
 
         @Override
